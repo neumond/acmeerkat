@@ -1,6 +1,6 @@
 from .core import (
     BaseKVStorage, BaseHTTPSClient, BaseCrypto,
-    KVNamespace, Algorithm, KeyPairDER,
+    KVNamespace, Algorithm, KeyPairBytes,
     KeyType, is_valid_key_type,
     CurveType, is_valid_curve_type,
     PublicKeyDict,
@@ -12,7 +12,7 @@ from .core import (
 
 __all__ = (
     'BaseKVStorage', 'BaseHTTPSClient', 'BaseCrypto',
-    'KVNamespace', 'Algorithm', 'KeyPairDER',
+    'KVNamespace', 'Algorithm', 'KeyPairBytes',
     'KeyType', 'is_valid_key_type',
     'CurveType', 'is_valid_curve_type',
     'PublicKeyDict',

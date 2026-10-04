@@ -3,7 +3,7 @@ import tempfile
 from dataclasses import dataclass
 
 from acmeerkat import (
-    BaseCrypto, Algorithm, KeyPairDER, PublicKeyDict,
+    BaseCrypto, Algorithm, KeyPairBytes, PublicKeyDict,
     b64_jose, JSONWebSignature, is_valid_curve_type)
 
 
@@ -21,7 +21,7 @@ class OpenSSLCrypto(BaseCrypto):
     def _stderr(self):
         return None if self.keep_stderr else subprocess.DEVNULL
 
-    def generate_key_pair(self, a: Algorithm) -> KeyPairDER:
+    def generate_key_pair(self, a: Algorithm) -> KeyPairBytes:
         if a is not Algorithm.ES256:
             raise ValueError(f'Unsupported algorithm {a}')
         # for longer keys try -name secp384r1 | secp521r1
@@ -37,7 +37,7 @@ class OpenSSLCrypto(BaseCrypto):
             check=True)
         return p.stdout
 
-    def check_key_pair(self, key_pair: KeyPairDER) -> bool:
+    def check_key_pair(self, key_pair: KeyPairBytes) -> bool:
         p = subprocess.run(
             [
                 *self.openssl_cmd, 'ec', '-in', '/dev/stdin', '-check',
@@ -87,7 +87,7 @@ class OpenSSLCrypto(BaseCrypto):
             'x': b64_jose(pub[:half]),
             'y': b64_jose(pub[half:])}
 
-    def pubkey_params(self, key_pair: KeyPairDER) -> PublicKeyDict:
+    def pubkey_params(self, key_pair: KeyPairBytes) -> PublicKeyDict:
         p = subprocess.run(
             [
                 *self.openssl_cmd, 'ec', '-in', '/dev/stdin',
@@ -99,7 +99,7 @@ class OpenSSLCrypto(BaseCrypto):
             check=True)
         return self._parse_pubkey(p.stdout.decode('ascii'))
 
-    def sign(self, key_pair: KeyPairDER, data: bytes) -> JSONWebSignature:
+    def sign(self, key_pair: KeyPairBytes, data: bytes) -> JSONWebSignature:
         with tempfile.NamedTemporaryFile(mode='wb') as tfile:
             tfile.write(data)
             tfile.flush()
@@ -131,7 +131,9 @@ class OpenSSLCrypto(BaseCrypto):
             if ' :' in line]
         return b64_jose(p1 + p2)
 
-    def generate_csr(self, key_pair: KeyPairDER, domains: list[str]) -> bytes:
+    def generate_csr(
+        self, key_pair: KeyPairBytes, domains: list[str],
+    ) -> bytes:
         san = ', '.join(f'DNS:{d}' for d in domains)
         p = subprocess.run(
             [

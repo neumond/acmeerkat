@@ -17,7 +17,7 @@ from . import error
 
 __all__ = (
     'BaseKVStorage', 'BaseHTTPSClient', 'BaseCrypto',
-    'KVNamespace', 'Algorithm', 'KeyPairDER',
+    'KVNamespace', 'Algorithm', 'KeyPairBytes',
     'KeyType', 'is_valid_key_type',
     'CurveType', 'is_valid_curve_type',
     'PublicKeyDict',
@@ -117,8 +117,7 @@ def jwk_thumbprint(d: PublicKeyDict) -> str:
 
 
 # should be openssl compatible
-type DERbytes = bytes
-type KeyPairDER = DERbytes
+type KeyPairBytes = bytes
 
 # rfc7518
 type JSONWebSignature = str
@@ -126,19 +125,21 @@ type JSONWebSignature = str
 
 @dataclass
 class BaseCrypto:
-    def generate_key_pair(self, a: Algorithm) -> KeyPairDER:
+    def generate_key_pair(self, a: Algorithm) -> KeyPairBytes:
         raise NotImplementedError
 
-    def check_key_pair(self, key_pair: KeyPairDER) -> bool:
+    def check_key_pair(self, key_pair: KeyPairBytes) -> bool:
         raise NotImplementedError
 
-    def pubkey_params(self, key_pair: KeyPairDER) -> PublicKeyDict:
+    def pubkey_params(self, key_pair: KeyPairBytes) -> PublicKeyDict:
         raise NotImplementedError
 
-    def sign(self, key_pair: KeyPairDER, data: bytes) -> JSONWebSignature:
+    def sign(self, key_pair: KeyPairBytes, data: bytes) -> JSONWebSignature:
         raise NotImplementedError
 
-    def generate_csr(self, key_pair: KeyPairDER, domains: list[str]) -> bytes:
+    def generate_csr(
+        self, key_pair: KeyPairBytes, domains: list[str],
+    ) -> bytes:
         raise NotImplementedError
 
 
@@ -281,7 +282,7 @@ class ProviderAccount:
     auto_update_account: bool = True
 
     @cached_property
-    def _key_pair(self) -> KeyPairDER:
+    def _key_pair(self) -> KeyPairBytes:
         kp = self.storage_ns.get(b'keypair')
         if not kp:
             # TODO: make alg a parameter
