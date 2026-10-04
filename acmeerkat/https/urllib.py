@@ -1,0 +1,47 @@
+from collections import abc
+from dataclasses import dataclass
+from typing import Literal
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+
+from acmeerkat import BaseHTTPSClient
+
+
+@dataclass
+class UrllibHTTPSClient(BaseHTTPSClient):
+    timeout: float = 10.0
+
+    def request(
+        self,
+        method: Literal['GET', 'POST', 'HEAD'],
+        url: str,
+        send_body: bytes | None,
+        send_headers: dict[str, str],
+        return_headers: abc.Iterable[str],
+    ) -> tuple[int, bytes | None, dict[str, str]]:
+        print('===========')
+        print('REQUEST', method, url)
+        for k, v in send_headers.items():
+            print(f'    {k}: {v}')
+        print(f'    {send_body}')
+        req = Request(url, method=method, headers=send_headers, data=send_body)
+        try:
+            resp = urlopen(req, timeout=self.timeout)
+        except HTTPError as e:
+            resp = e
+        hdrs = {}
+        for h in return_headers:
+            if (v := resp.getheader(h)):
+                hdrs[h] = v
+        body = None if method == 'HEAD' else resp.read()
+        print('RESPONSE', resp.status)
+        for k, v in hdrs.items():
+            print(f'    {k}: {v}')
+        print(f'    {body}')
+        return (
+            resp.status,
+            body,
+            hdrs)
+
+
+__all__ = (UrllibHTTPSClient, )
