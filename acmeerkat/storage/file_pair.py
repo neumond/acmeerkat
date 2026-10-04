@@ -7,6 +7,9 @@ from pathlib import Path
 from acmeerkat import BaseKVStorage
 
 
+__all__ = ('FilePairKVStorage', )
+
+
 @dataclass
 class FilePairKVStorage(BaseKVStorage):
     """
@@ -56,7 +59,7 @@ class FilePairKVStorage(BaseKVStorage):
         total_size = 0
         compactable_size = 0
         cap_found = False
-        kv = {}
+        kv: dict[bytes, bytes] = {}
         try:
             with p.open('rb') as f:
                 def read_exactly(ln: int) -> bytes:
@@ -115,6 +118,7 @@ class FilePairKVStorage(BaseKVStorage):
                 return self.file1, self.file2
             case 2:
                 return self.file2, self.file1
+        raise ValueError
 
     def __post_init__(self) -> None:
         v1, tot1, comp1, d1 = self._read_file(self.file1)
@@ -171,7 +175,7 @@ class FilePairKVStorage(BaseKVStorage):
             os.fsync(f.fileno())
         inact_path.write_bytes(b'')
 
-    def update(self, u: dict[bytes, bytes | None]) -> None:
+    def update(self, u: dict[bytes, bytes]) -> None:
         act_path, _ = self._active_inactive_paths()
         with act_path.open('ab') as f:
             fcntl.lockf(f, fcntl.LOCK_EX)
@@ -196,6 +200,3 @@ class FilePairKVStorage(BaseKVStorage):
 
     def get(self, k: bytes) -> bytes:
         return self._data.get(k, b'')
-
-
-__all__ = (FilePairKVStorage, )

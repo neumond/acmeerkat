@@ -5,6 +5,12 @@ from typing import ClassVar
 from acmeerkat import BaseTokenChallenge
 
 
+__all__ = (
+    'BaseHTTP01',
+    'ManualHTTP01', 'DictHTTP01', 'FileHTTP01',
+)
+
+
 class BaseHTTP01(BaseTokenChallenge):
     TYPE: ClassVar[str] = 'http-01'
 
@@ -49,9 +55,3 @@ class FileHTTP01(BaseHTTP01):
     def chal_remove(self, name: str) -> None:
         self._check_name(name)
         (self.directory / name).unlink(missing_ok=True)
-
-
-__all__ = (
-    BaseHTTP01,
-    ManualHTTP01, DictHTTP01, FileHTTP01,
-)

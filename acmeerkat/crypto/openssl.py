@@ -4,7 +4,10 @@ from dataclasses import dataclass
 
 from acmeerkat import (
     BaseCrypto, Algorithm, KeyPairDER, PublicKeyDict,
-    b64_jose, JSONWebSignature)
+    b64_jose, JSONWebSignature, is_valid_curve_type)
+
+
+__all__ = ('OpenSSLCrypto', )
 
 
 @dataclass
@@ -50,7 +53,7 @@ class OpenSSLCrypto(BaseCrypto):
         section = None
         is_private_key = False
         nist_curve = None
-        pub = []
+        pub_parts = []
         for line in t.splitlines():
             if not line:
                 continue
@@ -64,13 +67,16 @@ class OpenSSLCrypto(BaseCrypto):
                 continue
             match section:
                 case 'pub':
-                    pub.append(bytes.fromhex(line.strip().replace(':', '')))
+                    pub_parts.append(
+                        bytes.fromhex(line.strip().replace(':', '')))
 
         if not is_private_key:
             raise ValueError('Not a private key')
-        if nist_curve not in {'P-256'}:
+        if nist_curve is None:
+            raise ValueError('No curve type detected')
+        if not is_valid_curve_type(nist_curve):
             raise ValueError(f'Unsuppoted NIST curve: {nist_curve}')
-        pub = b''.join(pub)
+        pub = b''.join(pub_parts)
         if not pub.startswith(b'\x04'):
             raise ValueError('Pubkey must start with 04 byte')
         pub = pub[1:]
@@ -141,6 +147,3 @@ class OpenSSLCrypto(BaseCrypto):
             stderr=self._stderr,
             check=True)
         return p.stdout
-
-
-__all__ = (OpenSSLCrypto, )

@@ -1,6 +1,9 @@
 from .core import (
     BaseKVStorage, BaseHTTPSClient, BaseCrypto,
-    KVNamespace, Algorithm, KeyPairDER, PublicKeyDict,
+    KVNamespace, Algorithm, KeyPairDER,
+    KeyType, is_valid_key_type,
+    CurveType, is_valid_curve_type,
+    PublicKeyDict,
     b64_jose, JSONWebSignature, AcmeError,
     BaseChallenge, BaseTokenChallenge,
     ProviderAccount, CertUpdater,
@@ -8,9 +11,12 @@ from .core import (
 
 
 __all__ = (
-    BaseKVStorage, BaseHTTPSClient, BaseCrypto,
-    KVNamespace, Algorithm, KeyPairDER, PublicKeyDict,
-    b64_jose, JSONWebSignature, AcmeError,
-    BaseChallenge, BaseTokenChallenge,
-    ProviderAccount, CertUpdater,
+    'BaseKVStorage', 'BaseHTTPSClient', 'BaseCrypto',
+    'KVNamespace', 'Algorithm', 'KeyPairDER',
+    'KeyType', 'is_valid_key_type',
+    'CurveType', 'is_valid_curve_type',
+    'PublicKeyDict',
+    'b64_jose', 'JSONWebSignature', 'AcmeError',
+    'BaseChallenge', 'BaseTokenChallenge',
+    'ProviderAccount', 'CertUpdater',
 )

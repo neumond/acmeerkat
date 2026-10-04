@@ -7,6 +7,9 @@ from urllib.error import HTTPError
 from acmeerkat import BaseHTTPSClient
 
 
+__all__ = ('UrllibHTTPSClient', )
+
+
 @dataclass
 class UrllibHTTPSClient(BaseHTTPSClient):
     timeout: float = 10.0
@@ -23,7 +26,7 @@ class UrllibHTTPSClient(BaseHTTPSClient):
         print('REQUEST', method, url)
         for k, v in send_headers.items():
             print(f'    {k}: {v}')
-        print(f'    {send_body}')
+        print(f'    {send_body!r}')
         req = Request(url, method=method, headers=send_headers, data=send_body)
         try:
             resp = urlopen(req, timeout=self.timeout)
@@ -37,11 +40,8 @@ class UrllibHTTPSClient(BaseHTTPSClient):
         print('RESPONSE', resp.status)
         for k, v in hdrs.items():
             print(f'    {k}: {v}')
-        print(f'    {body}')
+        print(f'    {body!r}')
         return (
             resp.status,
             body,
             hdrs)
-
-
-__all__ = (UrllibHTTPSClient, )
