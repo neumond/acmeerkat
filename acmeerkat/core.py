@@ -492,7 +492,7 @@ class CertUpdater:
                     case _:
                         raise Exception(f'Invalid challenge: {resp}')
 
-    def _issue_new_cerificate(
+    def _issue_new_certificate(
         self,
         current_order_prefix: bytes = b'current_order/',
     ) -> None:

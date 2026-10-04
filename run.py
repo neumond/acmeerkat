@@ -29,4 +29,4 @@ cu = CertUpdater(
     account=acc,
     challenges=[ManualHTTP01()],
     storage_ns=KVNamespace(storage, b'certs/test.neumond.name/'))
-cu._issue_new_cerificate()
+cu._issue_new_certificate()
