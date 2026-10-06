@@ -11,11 +11,7 @@ from acmeerkat import jwk
 __all__ = ('OpenSslCrypto', )
 
 
-ALG_HASH = {
-    Algorithm.ES256: '-sha256',
-    Algorithm.ES384: '-sha384',
-    Algorithm.ES512: '-sha512',
-
+ALG_EXPLICIT_HASH = {
     Algorithm.RS256: '-sha256',
     Algorithm.RS384: '-sha384',
     Algorithm.RS512: '-sha512',
@@ -23,8 +19,6 @@ ALG_HASH = {
     Algorithm.PS256: '-sha256',
     Algorithm.PS384: '-sha384',
     Algorithm.PS512: '-sha512',
-
-    # TODO: EdDSA
 }
 
 
@@ -100,7 +94,6 @@ class OpenSslCrypto(BaseCrypto):
 
     @staticmethod
     def _parse_pubkey(t: str) -> jwk.BaseJsonWebPubKey:
-        # print(t)
         section: str = ''
         hex_section_parts: dict[str, list[bytes]] = {}
         single_line_sections = {}
@@ -109,20 +102,16 @@ class OpenSslCrypto(BaseCrypto):
                 continue
             if not line[:1].isspace():
                 section, line = line.split(':', 1)
-                line = line.strip()
-                if line:
-                    single_line_sections[section] = line
+                single_line_sections[section] = line.strip()
                 continue
             if section not in hex_section_parts:
                 hex_section_parts[section] = []
             hex_section_parts[section].append(
                 bytes.fromhex(line.strip().replace(':', '')))
 
-        if single_line_sections.get('Private-Key') is None:
-            raise ValueError('Not a private key')
-
         if (
-            'pub' in hex_section_parts
+            'Private-Key' in single_line_sections
+            and 'pub' in hex_section_parts
             and 'NIST CURVE' in single_line_sections
         ):
             pub = b''.join(hex_section_parts['pub'])
@@ -136,12 +125,29 @@ class OpenSslCrypto(BaseCrypto):
                 y=pub[half:])
 
         if (
-            'modulus' in hex_section_parts
+            'Private-Key' in single_line_sections
+            and 'modulus' in hex_section_parts
             and 'publicExponent' in single_line_sections
         ):
             return jwk.RsaJsonWebPubKey(
                 n=b''.join(hex_section_parts['modulus']),
                 e=int(single_line_sections['publicExponent'].split(' ', 1)[0]))
+
+        if (
+            'ED25519 Private-Key' in single_line_sections
+            and 'priv' in hex_section_parts
+        ):
+            return jwk.EdJsonWebPubKey(
+                crv=jwk.EdDsaVariant.Ed25519,
+                x=b''.join(hex_section_parts['priv']))
+
+        if (
+            'ED448 Private-Key' in single_line_sections
+            and 'priv' in hex_section_parts
+        ):
+            return jwk.EdJsonWebPubKey(
+                crv=jwk.EdDsaVariant.Ed448,
+                x=b''.join(hex_section_parts['priv']))
 
         raise ValueError('Unknown key type')
 
@@ -167,12 +173,22 @@ class OpenSslCrypto(BaseCrypto):
         key_pair: KeyPairBytes,
         data: bytes,
     ) -> JSONWebSignature:
+        cmd = []
+        if (h := ALG_EXPLICIT_HASH.get(alg, None)):
+            cmd.append(h)
+        if alg in (
+            Algorithm.PS256,
+            Algorithm.PS384,
+            Algorithm.PS512,
+        ):
+            cmd.extend(['-sigopt', 'rsa_padding_mode:pss'])
+
         with tempfile.NamedTemporaryFile(mode='wb') as tfile:
             tfile.write(data)
             tfile.flush()
             p = subprocess.run(
                 [
-                    *self.openssl_cmd, 'dgst', ALG_HASH[alg],
+                    *self.openssl_cmd, 'dgst', *cmd,
                     # send sensitive data over anonymous pipe
                     '-sign', '/dev/stdin',
                     tfile.name,
@@ -182,6 +198,7 @@ class OpenSslCrypto(BaseCrypto):
                 stderr=self._stderr,
                 check=True)
             signature = p.stdout
+
         match self.json_web_pub_key(key_pair):
             case jwk.EcJsonWebPubKey(crv):
                 p = subprocess.run(
@@ -212,6 +229,8 @@ class OpenSslCrypto(BaseCrypto):
                 return b64_jose(p1 + p2)
             case jwk.RsaJsonWebPubKey():
                 return b64_jose(signature)
+            case jwk.EdJsonWebPubKey(crv):
+                return b64_jose(signature)
         raise ValueError
 
     def generate_csr(
@@ -220,10 +239,13 @@ class OpenSslCrypto(BaseCrypto):
         key_pair: KeyPairBytes,
         domains: list[str],
     ) -> bytes:
+        cmd = []
+        if (h := ALG_EXPLICIT_HASH.get(alg, None)):
+            cmd.append(h)
         san = ', '.join(f'DNS:{d}' for d in domains)
         p = subprocess.run(
             [
-                *self.openssl_cmd, 'req', '-new', ALG_HASH[alg],
+                *self.openssl_cmd, 'req', '-new', *cmd,
                 # send sensitive data over anonymous pipe
                 '-key', '/dev/stdin',
                 # recommended in LE docs

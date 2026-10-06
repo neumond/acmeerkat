@@ -69,10 +69,19 @@ def _fit_bits(n: int, step: int) -> int:
     (
         jwk.EcKeyParams(jwk.CurveType.P_521),
         Algorithm.ES512, _fit_bits(521, 8) * 2),
+
     (jwk.RsaKeyParams(bits=1024), Algorithm.RS256, 1024),
     (jwk.RsaKeyParams(bits=2048), Algorithm.RS256, 2048),
     (jwk.RsaKeyParams(bits=4096), Algorithm.RS256, 4096),
+
     (jwk.RsaKeyParams(bits=2048), Algorithm.RS512, 2048),
+
+    (jwk.RsaPssKeyParams(bits=2048), Algorithm.PS256, 2048),
+    (jwk.RsaPssKeyParams(bits=2048), Algorithm.PS384, 2048),
+    (jwk.RsaPssKeyParams(bits=2048), Algorithm.PS512, 2048),
+
+    (jwk.EdKeyParams(jwk.EdDsaVariant.Ed25519), Algorithm.EdDSA, 512),
+    (jwk.EdKeyParams(jwk.EdDsaVariant.Ed448), Algorithm.EdDSA, 912),
 ])
 def test_gen_check_sign(params, alg, sigsize):
     c = OpenSslCrypto(debug=False)
@@ -81,9 +90,8 @@ def test_gen_check_sign(params, alg, sigsize):
     assert c.check_key_pair(kp) is True
     sgn = c.sign(alg, kp, b'hello world')
     assert len(sgn) > 0
-    if sigsize is not None:
-        sgnbin = base64.urlsafe_b64decode(sgn + '====')
-        assert len(sgnbin) * 8 == sigsize
+    sgnbin = base64.urlsafe_b64decode(sgn + '====')
+    assert len(sgnbin) * 8 == sigsize
     csr = c.generate_csr(alg, kp, ['example.org'])
     assert len(csr) > 0
 
@@ -94,9 +102,28 @@ def test_check_empty_bytes():
 
 
 def test_rsa_signature_hashes():
-    c = OpenSslCrypto(debug=False)
+    c = OpenSslCrypto()
     kp = c.generate_key_pair(jwk.RsaKeyParams())
     text = b'hello world'
     sgn_256 = c.sign(Algorithm.RS256, kp, text)
+    sgn_256_2 = c.sign(Algorithm.RS256, kp, text)
     sgn_512 = c.sign(Algorithm.RS512, kp, text)
+    sgn_512_2 = c.sign(Algorithm.RS512, kp, text)
     assert sgn_256 != sgn_512
+    assert sgn_256 == sgn_256_2
+    assert sgn_512 == sgn_512_2
+
+
+def test_rsa_modes():
+    c = OpenSslCrypto()
+    kp = c.generate_key_pair(jwk.RsaKeyParams())
+    text = b'hello world'
+    sgn_reg = c.sign(Algorithm.RS256, kp, text)
+    sgn_reg2 = c.sign(Algorithm.RS256, kp, text)
+    sgn_pss = c.sign(Algorithm.PS256, kp, text)
+    sgn_pss2 = c.sign(Algorithm.PS256, kp, text)
+    assert sgn_reg != sgn_pss
+    assert sgn_reg == sgn_reg2
+    # NOTE: PSS is not repeatable
+    # that's the whole purpose of PSS
+    assert sgn_pss != sgn_pss2
