@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, InitVar
 from functools import cached_property
 from random import random
 from time import sleep
-from typing import ClassVar, Self
+from typing import Any, ClassVar, Self
 
 from .error import AcmeError
 from .utils import b64_jose, bin_json_dumps, jws_serialize
@@ -68,7 +68,7 @@ class HttpsClientWrap:
         self,
         r: tuple[int, bytes | None, dict[str, str]],
         capture_headers: Iterable[str] = (),
-    ) -> dict | bytes:
+    ) -> dict[Any, Any] | bytes:
         status, data, hdrs = r
         bad_status = not (200 <= status < 300)
         if data is None:
@@ -125,10 +125,10 @@ class HttpsClientWrap:
         return n
 
     def post(
-        self, url: str, data: dict,
+        self, url: str, data: dict[Any, Any],
         capture_headers: Iterable[str] = (),
         accept_pem_chain: bool = False,
-    ) -> dict | bytes:
+    ) -> dict[Any, Any] | bytes:
         h = self._def_hdrs()
         h[self.CTYPE_HEADER] = self.JOSE_JSON_MIME
         if accept_pem_chain:
@@ -169,7 +169,7 @@ class ProviderAccount:
         https_client: abc.BaseHttpsClient,
         user_agent: str,
         accept_language: str,
-    ):
+    ) -> None:
         self._hwrap = HttpsClientWrap(
             directory_url,
             https_client,
@@ -203,12 +203,12 @@ class ProviderAccount:
     def _thumbprint(self) -> str:
         return jwk.thumbprint(self._json_web_pub_key)
 
-    def _sign_request(self, d: dict) -> None:
+    def _sign_request(self, d: dict[Any, Any]) -> None:
         d['signature'] = self.crypto.sign(
             self._alg, self._key_pair,
             f"{d['protected']}.{d['payload']}".encode('ascii'))
 
-    def _call_new_account(self, payload: dict) -> t.AccountDict:
+    def _call_new_account(self, payload: dict[Any, Any]) -> t.AccountDict:
         d = {
             'protected': jws_serialize({
                 'alg': 'ES256',  # TODO: alg depends on key_pair used
@@ -263,9 +263,9 @@ class ProviderAccount:
 
     def _do_signed_request(
         self, url: str,
-        payload: dict | str,
+        payload: dict[Any, Any] | str,
         capture_headers: Iterable[str] = (),
-    ) -> dict:
+    ) -> dict[Any, Any]:
         d = {
             'protected': self._make_protected(url),
             'payload': (
@@ -289,7 +289,7 @@ class ProviderAccount:
         return r
 
 
-def _retry_delay(resp: dict) -> float:
+def _retry_delay(resp: dict[Any, Any]) -> float:
     if (ra := resp.get('__Retry-After', None)):
         return float(ra)
     return 5. + random() * 2.

@@ -24,7 +24,7 @@ __all__ = (
 class BaseJsonWebPubKey:
     # rfc7517
     # TODO: remove thumbprint parameter
-    def to_json(self, thumbprint: bool) -> dict:
+    def to_json(self, thumbprint: bool) -> dict[str, str]:
         raise NotImplementedError
 
 
@@ -44,7 +44,7 @@ class EcJsonWebPubKey(BaseJsonWebPubKey):
     x: bytes
     y: bytes
 
-    def to_json(self, thumbprint: bool) -> dict:
+    def to_json(self, thumbprint: bool) -> dict[str, str]:
         return {
             'kty': 'EC',
             'crv': self.crv.value,
@@ -64,7 +64,7 @@ class RsaJsonWebPubKey(BaseJsonWebPubKey):
     n: bytes
     e: int
 
-    def to_json(self, thumbprint: bool) -> dict:
+    def to_json(self, thumbprint: bool) -> dict[str, str]:
         return {
             'kty': 'RSA',
             'n': b64_jose(self.n),
@@ -97,7 +97,7 @@ class EdJsonWebPubKey(BaseJsonWebPubKey):
     crv: EdDsaVariant
     x: bytes
 
-    def to_json(self, thumbprint: bool) -> dict:
+    def to_json(self, thumbprint: bool) -> dict[str, str]:
         return {
             'kty': 'OKP',
             'crv': self.crv.value,

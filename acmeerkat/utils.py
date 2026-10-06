@@ -1,19 +1,26 @@
 import base64
 import json
+from typing import Any
 
 
 COMPACT_JSON_SEP = (',', ':')
 
 
-def b64_jose(b):
+def b64_jose(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode('utf-8').rstrip('=')
 
 
-def bin_json_dumps(d: dict, separators=COMPACT_JSON_SEP) -> bytes:
+def bin_json_dumps(
+    d: dict[Any, Any],
+    separators: tuple[str, str] = COMPACT_JSON_SEP,
+) -> bytes:
     return json.dumps(d, separators=separators).encode('utf-8')
 
 
-def jws_serialize(d: dict, separators=COMPACT_JSON_SEP) -> str:
+def jws_serialize(
+    d: dict[Any, Any],
+    separators: tuple[str, str] = COMPACT_JSON_SEP,
+) -> str:
     return b64_jose(bin_json_dumps(d, separators=separators))
 
 

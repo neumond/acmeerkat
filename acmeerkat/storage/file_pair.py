@@ -69,7 +69,7 @@ class FilePairKVStorage(BaseKVStorage):
                     total_size += ln
                     return b
 
-                def read_int32():
+                def read_int32() -> int:
                     return int.from_bytes(read_exactly(4))
 
                 version = read_int32()

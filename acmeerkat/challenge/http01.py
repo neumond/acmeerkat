@@ -33,7 +33,7 @@ class ManualHTTP01(BaseHTTP01):
 
 @dataclass
 class DictHTTP01(BaseHTTP01):
-    d: dict
+    d: dict[str, str]
 
     def chal_set(self, name: str, content: str) -> None:
         self.d[name] = content
@@ -46,7 +46,7 @@ class DictHTTP01(BaseHTTP01):
 class FileHTTP01(BaseHTTP01):
     directory: Path
 
-    def _check_name(self, name: str):
+    def _check_name(self, name: str) -> None:
         assert '/' not in name
         assert '..' not in name
 

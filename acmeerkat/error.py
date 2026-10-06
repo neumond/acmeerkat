@@ -1,25 +1,25 @@
 from dataclasses import dataclass
-from typing import ClassVar, Self
+from typing import Any, Callable, ClassVar
 
 
 @dataclass
 class AcmeError(Exception):
     detail: str
-    subproblems: list | None = None
+    subproblems: list[Any] | None = None
 
-    _SUBCLS_MAP: ClassVar[dict] = {}
+    _SUBCLS_MAP: ClassVar[dict[str, type['AcmeError']]] = {}
     _TYPE_PREFIX: ClassVar[str] = 'urn:ietf:params:acme:error:'
 
     @classmethod
-    def _reg(cls, err_type: str):
-        def deco(subcls):
+    def _reg(cls, err_type: str) -> Callable[[type], type]:
+        def deco(subcls: type['AcmeError']) -> type['AcmeError']:
             assert issubclass(subcls, cls)
             cls._SUBCLS_MAP[err_type] = subcls
             return subcls
         return deco
 
     @classmethod
-    def from_json(cls, j: dict) -> Self:
+    def from_json(cls, j: dict[Any, Any]) -> 'AcmeError':
         t = j.get('type', '')
         if not t.startswith(cls._TYPE_PREFIX):
             raise Exception(f'Not a valid acme error: {j}')

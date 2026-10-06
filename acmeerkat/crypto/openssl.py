@@ -36,7 +36,7 @@ class OpenSslCrypto(BaseCrypto):
     debug: bool = False  # debug openssl calls
 
     @property
-    def _stderr(self):
+    def _stderr(self) -> int | None:
         return None if self.debug else subprocess.DEVNULL
 
     def generate_key_pair(self, params: jwk.BaseKeyParams) -> KeyPairBytes:

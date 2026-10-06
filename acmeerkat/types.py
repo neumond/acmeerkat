@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Literal, get_args, Required, Self, TypedDict, TypeGuard
+from typing import Any, Literal, get_args, Required, Self, TypedDict, TypeGuard
 
 
 __all__ = (
@@ -100,7 +100,7 @@ DirectoryDict = TypedDict('DirectoryDict', {
 }, total=False)
 
 
-def is_valid_directory_dict(d: dict) -> TypeGuard[DirectoryDict]:
+def is_valid_directory_dict(d: dict[str, Any]) -> TypeGuard[DirectoryDict]:
     return (
         isinstance(d, dict)
         and isinstance(d.get('newAccount'), str)
@@ -122,7 +122,7 @@ AccountDict = TypedDict('AccountDict', {
 }, total=False)
 
 
-def is_valid_account_dict(d: dict) -> TypeGuard[AccountDict]:
+def is_valid_account_dict(d: dict[str, Any]) -> TypeGuard[AccountDict]:
     return (
         isinstance(d, dict)
         and isinstance(d.get('__Location'), str)
