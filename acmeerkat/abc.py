@@ -5,7 +5,7 @@ from typing import ClassVar, Literal
 from .jwk import BaseJsonWebPubKey, BaseKeyParams
 from .types import (
     Algorithm, AuthzIdentifier, ChallengeConfig,
-    JSONWebSignature, KeyPairBytes, PemPrivKey)
+    KeyPairBytes, PemPrivKey)
 
 
 __all__ = (
@@ -62,8 +62,8 @@ class BaseCrypto:
 
     def sign(
         self, alg: Algorithm, key_pair: KeyPairBytes, data: bytes,
-    ) -> JSONWebSignature:
-        # TODO: what if we return raw bytes here
+    ) -> bytes:
+        # suitable for rfc7518 json web signature, but without b64 encoding
         raise NotImplementedError
 
     def generate_csr(

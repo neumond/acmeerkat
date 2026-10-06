@@ -2,9 +2,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 
-from acmeerkat import (
-    BaseCrypto, Algorithm, KeyPairBytes,
-    b64_jose, JSONWebSignature)
+from acmeerkat import BaseCrypto, Algorithm, KeyPairBytes
 from acmeerkat import jwk
 
 
@@ -172,7 +170,7 @@ class OpenSslCrypto(BaseCrypto):
         alg: Algorithm,
         key_pair: KeyPairBytes,
         data: bytes,
-    ) -> JSONWebSignature:
+    ) -> bytes:
         cmd = []
         if (h := ALG_EXPLICIT_HASH.get(alg, None)):
             cmd.append(h)
@@ -226,11 +224,9 @@ class OpenSslCrypto(BaseCrypto):
                         s = 66
                 p1 = p1.rjust(s, b'\0')
                 p2 = p2.rjust(s, b'\0')
-                return b64_jose(p1 + p2)
-            case jwk.RsaJsonWebPubKey():
-                return b64_jose(signature)
-            case jwk.EdJsonWebPubKey(crv):
-                return b64_jose(signature)
+                return p1 + p2
+            case jwk.RsaJsonWebPubKey() | jwk.EdJsonWebPubKey():
+                return signature
         raise ValueError
 
     def generate_csr(

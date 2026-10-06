@@ -1,5 +1,3 @@
-import base64
-
 import pytest
 
 from acmeerkat import Algorithm, jwk
@@ -89,9 +87,7 @@ def test_gen_check_sign(params, alg, sigsize):
     assert len(kp) > 0
     assert c.check_key_pair(kp) is True
     sgn = c.sign(alg, kp, b'hello world')
-    assert len(sgn) > 0
-    sgnbin = base64.urlsafe_b64decode(sgn + '====')
-    assert len(sgnbin) * 8 == sigsize
+    assert len(sgn) * 8 == sigsize
     csr = c.generate_csr(alg, kp, ['example.org'])
     assert len(csr) > 0
 

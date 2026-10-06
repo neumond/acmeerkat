@@ -24,9 +24,6 @@ from .types import (
     KeyPairBytes,
     PemPrivKey,
 )
-from .utils import (
-    b64_jose,
-)
 
 
 __all__ = (
@@ -54,6 +51,4 @@ __all__ = (
     'JSONWebSignature',
     'KeyPairBytes',
     'PemPrivKey',
-    # utils
-    'b64_jose',
 )

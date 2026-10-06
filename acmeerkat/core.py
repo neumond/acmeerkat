@@ -204,9 +204,9 @@ class ProviderAccount:
         return jwk.thumbprint(self._json_web_pub_key)
 
     def _sign_request(self, d: dict[Any, Any]) -> None:
-        d['signature'] = self.crypto.sign(
+        d['signature'] = b64_jose(self.crypto.sign(
             self._alg, self._key_pair,
-            f"{d['protected']}.{d['payload']}".encode('ascii'))
+            f"{d['protected']}.{d['payload']}".encode('ascii')))
 
     def _call_new_account(self, payload: dict[Any, Any]) -> t.AccountDict:
         d = {
