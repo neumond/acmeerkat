@@ -2,8 +2,22 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 
-from acmeerkat import BaseCrypto, Algorithm, KeyPairBytes
-from acmeerkat import jwk
+from acmeerkat import (
+    Algorithm,
+    BaseCrypto,
+    BaseJsonWebPubKey,
+    BaseKeyParams,
+    EcJsonWebPubKey,
+    EcKeyParams,
+    EcType,
+    EdJsonWebPubKey,
+    EdKeyParams,
+    EdVariant,
+    KeyPairBytes,
+    RsaJsonWebPubKey,
+    RsaKeyParams,
+    RsaPssKeyParams,
+)
 
 
 __all__ = ('OpenSslCrypto', )
@@ -31,21 +45,21 @@ class OpenSslCrypto(BaseCrypto):
     def _stderr(self) -> int | None:
         return None if self.debug else subprocess.DEVNULL
 
-    def generate_key_pair(self, params: jwk.BaseKeyParams) -> KeyPairBytes:
+    def generate_key_pair(self, params: BaseKeyParams) -> KeyPairBytes:
         gpk = []
         match params:
-            case jwk.EcKeyParams():
+            case EcKeyParams():
                 gpk.extend([
                     '-algorithm', 'EC',
                     '-pkeyopt', f'ec_paramgen_curve:{params.crv.value}',
                     '-pkeyopt', 'ec_param_enc:named_curve'])
-            case jwk.RsaKeyParams():
+            case RsaKeyParams():
                 gpk.extend([
                     '-algorithm', 'RSA',
                     '-pkeyopt', f'rsa_keygen_bits:{params.bits}',
                     '-pkeyopt', f'rsa_keygen_primes:{params.primes}',
                     '-pkeyopt', f'rsa_keygen_pubexp:{params.pubexp}'])
-            case jwk.RsaPssKeyParams():
+            case RsaPssKeyParams():
                 gpk.extend([
                     '-algorithm', 'RSA-PSS',
                     '-pkeyopt', f'rsa_keygen_bits:{params.bits}',
@@ -63,7 +77,7 @@ class OpenSslCrypto(BaseCrypto):
                     gpk.extend([
                         '-pkeyopt',
                         f'rsa_pss_keygen_saltlen:{params.saltlen}'])
-            case jwk.EdKeyParams():
+            case EdKeyParams():
                 gpk.extend([
                     '-algorithm', params.crv.value.upper()])
         p = subprocess.run(
@@ -91,7 +105,7 @@ class OpenSslCrypto(BaseCrypto):
         return p.returncode == 0
 
     @staticmethod
-    def _parse_pubkey(t: str) -> jwk.BaseJsonWebPubKey:
+    def _parse_pubkey(t: str) -> BaseJsonWebPubKey:
         section: str = ''
         hex_section_parts: dict[str, list[bytes]] = {}
         single_line_sections = {}
@@ -117,8 +131,8 @@ class OpenSslCrypto(BaseCrypto):
                 raise ValueError('EC pubkey must start with 04 byte')
             pub = pub[1:]
             half = len(pub) // 2
-            return jwk.EcJsonWebPubKey(
-                crv=jwk.CurveType(single_line_sections['NIST CURVE']),
+            return EcJsonWebPubKey(
+                crv=EcType(single_line_sections['NIST CURVE']),
                 x=pub[:half],
                 y=pub[half:])
 
@@ -127,7 +141,7 @@ class OpenSslCrypto(BaseCrypto):
             and 'modulus' in hex_section_parts
             and 'publicExponent' in single_line_sections
         ):
-            return jwk.RsaJsonWebPubKey(
+            return RsaJsonWebPubKey(
                 n=b''.join(hex_section_parts['modulus']),
                 e=int(single_line_sections['publicExponent'].split(' ', 1)[0]))
 
@@ -135,23 +149,23 @@ class OpenSslCrypto(BaseCrypto):
             'ED25519 Private-Key' in single_line_sections
             and 'priv' in hex_section_parts
         ):
-            return jwk.EdJsonWebPubKey(
-                crv=jwk.EdDsaVariant.Ed25519,
+            return EdJsonWebPubKey(
+                crv=EdVariant.Ed25519,
                 x=b''.join(hex_section_parts['priv']))
 
         if (
             'ED448 Private-Key' in single_line_sections
             and 'priv' in hex_section_parts
         ):
-            return jwk.EdJsonWebPubKey(
-                crv=jwk.EdDsaVariant.Ed448,
+            return EdJsonWebPubKey(
+                crv=EdVariant.Ed448,
                 x=b''.join(hex_section_parts['priv']))
 
         raise ValueError('Unknown key type')
 
     def json_web_pub_key(
         self, key_pair: KeyPairBytes,
-    ) -> jwk.BaseJsonWebPubKey:
+    ) -> BaseJsonWebPubKey:
         p = subprocess.run(
             [
                 *self.openssl_cmd, 'pkey',
@@ -198,7 +212,7 @@ class OpenSslCrypto(BaseCrypto):
             signature = p.stdout
 
         match self.json_web_pub_key(key_pair):
-            case jwk.EcJsonWebPubKey(crv):
+            case EcJsonWebPubKey(crv):
                 p = subprocess.run(
                     [
                         *self.openssl_cmd, 'asn1parse',
@@ -216,16 +230,16 @@ class OpenSslCrypto(BaseCrypto):
                 # asn1 keeps signature as 2 integers
                 # with variable size binary representation
                 match crv:
-                    case jwk.CurveType.P_256:
+                    case EcType.P_256:
                         s = 32
-                    case jwk.CurveType.P_384:
+                    case EcType.P_384:
                         s = 48
-                    case jwk.CurveType.P_521:
+                    case EcType.P_521:
                         s = 66
                 p1 = p1.rjust(s, b'\0')
                 p2 = p2.rjust(s, b'\0')
                 return p1 + p2
-            case jwk.RsaJsonWebPubKey() | jwk.EdJsonWebPubKey():
+            case RsaJsonWebPubKey() | EdJsonWebPubKey():
                 return signature
         raise ValueError
 

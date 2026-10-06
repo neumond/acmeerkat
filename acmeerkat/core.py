@@ -182,7 +182,7 @@ class ProviderAccount:
         if not kp:
             # TODO: make a parameter
             kp = self.crypto.generate_key_pair(jwk.EcKeyParams(
-                crv=jwk.CurveType.P_256))
+                crv=jwk.EcType.P_256))
             self.storage_ns.update({
                 b'alg': t.Algorithm.ES256.to_bytes(),
                 b'keypair': kp})
@@ -201,7 +201,7 @@ class ProviderAccount:
 
     @cached_property
     def _thumbprint(self) -> str:
-        return jwk.thumbprint(self._json_web_pub_key)
+        return self._json_web_pub_key.thumbprint()
 
     def _sign_request(self, d: dict[Any, Any]) -> None:
         d['signature'] = b64_jose(self.crypto.sign(
@@ -308,7 +308,7 @@ class CertUpdater:
     storage_ns: KVNamespace
     alg: t.Algorithm = t.Algorithm.ES256
     key_params: jwk.BaseKeyParams = field(
-        default_factory=lambda: jwk.EcKeyParams(crv=jwk.CurveType.P_256))
+        default_factory=lambda: jwk.EcKeyParams(crv=jwk.EcType.P_256))
     # deploy: Callable
     # on_failure: Callable
 

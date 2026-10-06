@@ -11,6 +11,19 @@ from .core import (
     ProviderAccount,
 )
 from .error import AcmeError
+from .jwk import (
+    BaseJsonWebPubKey,
+    BaseKeyParams,
+    EcJsonWebPubKey,
+    EcKeyParams,
+    EcType,
+    EdJsonWebPubKey,
+    EdKeyParams,
+    EdVariant,
+    RsaJsonWebPubKey,
+    RsaKeyParams,
+    RsaPssKeyParams,
+)
 from .types import (
     AccountDict,
     AccountStatus,
@@ -39,6 +52,18 @@ __all__ = (
     'ProviderAccount',
     # error
     'AcmeError',
+    # jwk
+    'BaseJsonWebPubKey',
+    'BaseKeyParams',
+    'EcJsonWebPubKey',
+    'EcKeyParams',
+    'EcType',
+    'EdJsonWebPubKey',
+    'EdKeyParams',
+    'EdVariant',
+    'RsaJsonWebPubKey',
+    'RsaKeyParams',
+    'RsaPssKeyParams',
     # types
     'AccountDict',
     'AccountStatus',

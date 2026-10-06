@@ -26,7 +26,7 @@ def test_jws_serialize(input, encoded):
 
 def test_jwk_thumbprint():
     # rfc7638 example
-    assert jwk.thumbprint(jwk.RsaJsonWebPubKey(
+    k = jwk.RsaJsonWebPubKey(
         n=urlsafe_b64decode(
             b'0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAt'
             b'VT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn6'
@@ -34,8 +34,8 @@ def test_jwk_thumbprint():
             b'W2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n9'
             b'1CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINH'
             b'aQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw=='),
-        e=65537,
-    )) == 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs'
+        e=65537)
+    assert k.thumbprint() == 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs'
 
 
 @pytest.mark.parametrize('n,b', [

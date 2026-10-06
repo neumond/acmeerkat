@@ -23,13 +23,13 @@ def dump_storage():
         print(k, v[:50])
 
 
-kp = crypto.generate_key_pair(jwk.EcKeyParams(crv=jwk.CurveType.P_256))
+kp = crypto.generate_key_pair(jwk.EcKeyParams(crv=jwk.EcType.P_256))
 print(kp)
 print()
 crypto.check_key_pair(kp)
 print(crypto.json_web_pub_key(kp))
 print()
-print(crypto.json_web_pub_key(kp).to_json(False))
+print(crypto.json_web_pub_key(kp).to_json())
 # print(kp)
 # print(crypto.sign(kp, b'hello world'))
 

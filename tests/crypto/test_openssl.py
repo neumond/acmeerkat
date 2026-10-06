@@ -52,7 +52,7 @@ NIST CURVE: P-256
     }),
 ])
 def test_parse_pubkey(pktext, jsonv):
-    assert OpenSslCrypto._parse_pubkey(pktext).to_json(False) == jsonv
+    assert OpenSslCrypto._parse_pubkey(pktext).to_json() == jsonv
 
 
 def _fit_bits(n: int, step: int) -> int:
@@ -62,10 +62,10 @@ def _fit_bits(n: int, step: int) -> int:
 
 
 @pytest.mark.parametrize('params,alg,sigsize', [
-    (jwk.EcKeyParams(jwk.CurveType.P_256), Algorithm.ES256, 256 * 2),
-    (jwk.EcKeyParams(jwk.CurveType.P_384), Algorithm.ES384, 384 * 2),
+    (jwk.EcKeyParams(jwk.EcType.P_256), Algorithm.ES256, 256 * 2),
+    (jwk.EcKeyParams(jwk.EcType.P_384), Algorithm.ES384, 384 * 2),
     (
-        jwk.EcKeyParams(jwk.CurveType.P_521),
+        jwk.EcKeyParams(jwk.EcType.P_521),
         Algorithm.ES512, _fit_bits(521, 8) * 2),
 
     (jwk.RsaKeyParams(bits=1024), Algorithm.RS256, 1024),
@@ -78,8 +78,8 @@ def _fit_bits(n: int, step: int) -> int:
     (jwk.RsaPssKeyParams(bits=2048), Algorithm.PS384, 2048),
     (jwk.RsaPssKeyParams(bits=2048), Algorithm.PS512, 2048),
 
-    (jwk.EdKeyParams(jwk.EdDsaVariant.Ed25519), Algorithm.EdDSA, 512),
-    (jwk.EdKeyParams(jwk.EdDsaVariant.Ed448), Algorithm.EdDSA, 912),
+    (jwk.EdKeyParams(jwk.EdVariant.Ed25519), Algorithm.EdDSA, 512),
+    (jwk.EdKeyParams(jwk.EdVariant.Ed448), Algorithm.EdDSA, 912),
 ])
 def test_gen_check_sign(params, alg, sigsize):
     c = OpenSslCrypto(debug=False)

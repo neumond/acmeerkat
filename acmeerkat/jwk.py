@@ -9,12 +9,12 @@ from .utils import b64_jose, uint_to_bytes
 __all__ = (
     'BaseJsonWebPubKey',
     'BaseKeyParams',
-    'CurveType',
     'EcJsonWebPubKey',
     'EcKeyParams',
-    'EdDsaVariant',
+    'EcType',
     'EdJsonWebPubKey',
     'EdKeyParams',
+    'EdVariant',
     'RsaJsonWebPubKey',
     'RsaKeyParams',
     'RsaPssKeyParams',
@@ -23,97 +23,93 @@ __all__ = (
 
 class BaseJsonWebPubKey:
     # rfc7517
-    # TODO: remove thumbprint parameter
-    def to_json(self, thumbprint: bool) -> dict[str, str]:
+
+    def to_json(self) -> dict[str, str]:
+        # used only in .thumbprint method
         raise NotImplementedError
+
+    def thumbprint(self) -> str:
+        # JSON Web Key (JWK) Thumbprint, rfc7638
+        return b64_jose(hashlib.sha256(json.dumps(
+            self.to_json(),
+            separators=(',', ':'),
+            sort_keys=True,
+        ).encode('utf-8')).digest())
 
 
 class BaseKeyParams:
     pass
 
 
-class CurveType(Enum):
+class EcType(Enum):
     P_256 = 'P-256'
     P_384 = 'P-384'
     P_521 = 'P-521'  # NOTE: not 512!
 
 
-@dataclass
+@dataclass(frozen=True)
 class EcJsonWebPubKey(BaseJsonWebPubKey):
-    crv: CurveType
+    crv: EcType
     x: bytes
     y: bytes
 
-    def to_json(self, thumbprint: bool) -> dict[str, str]:
+    def to_json(self) -> dict[str, str]:
         return {
             'kty': 'EC',
             'crv': self.crv.value,
             'x': b64_jose(self.x),
-            'y': b64_jose(self.y),
-        }
+            'y': b64_jose(self.y)}
 
 
-# TODO: make all KeyParams frozen
-@dataclass
+@dataclass(frozen=True)
 class EcKeyParams(BaseKeyParams):
-    crv: CurveType = CurveType.P_256
+    crv: EcType = EcType.P_256
 
 
-@dataclass
+@dataclass(frozen=True)
 class RsaJsonWebPubKey(BaseJsonWebPubKey):
     n: bytes
     e: int
 
-    def to_json(self, thumbprint: bool) -> dict[str, str]:
+    def to_json(self) -> dict[str, str]:
         return {
             'kty': 'RSA',
             'n': b64_jose(self.n),
-            'e': b64_jose(uint_to_bytes(self.e)),
-        }
+            'e': b64_jose(uint_to_bytes(self.e))}
 
 
-@dataclass
+@dataclass(frozen=True)
 class RsaKeyParams(BaseKeyParams):
     bits: int = 2048
     primes: int = 2
     pubexp: int = 65537
 
 
-@dataclass
+@dataclass(frozen=True)
 class RsaPssKeyParams(RsaKeyParams):
     md: str | None = None  # TODO: make enum
     mgf1: str | None = None  # TODO: make enum
     saltlen: int | None = None
 
 
-class EdDsaVariant(Enum):
+class EdVariant(Enum):
     Ed25519 = 'Ed25519'
     Ed448 = 'Ed448'
 
 
-@dataclass
+@dataclass(frozen=True)
 class EdJsonWebPubKey(BaseJsonWebPubKey):
     # rfc8037
-    crv: EdDsaVariant
+    crv: EdVariant
     x: bytes
 
-    def to_json(self, thumbprint: bool) -> dict[str, str]:
+    def to_json(self) -> dict[str, str]:
         return {
             'kty': 'OKP',
             'crv': self.crv.value,
-            'x': b64_jose(self.x),
-        }
+            'x': b64_jose(self.x)}
 
 
-@dataclass
+@dataclass(frozen=True)
 class EdKeyParams(BaseKeyParams):
-    crv: EdDsaVariant
-
-
-def thumbprint(d: BaseJsonWebPubKey) -> str:
-    # JSON Web Key (JWK) Thumbprint, rfc7638
-    return b64_jose(hashlib.sha256(json.dumps(
-        d.to_json(thumbprint=True),
-        separators=(',', ':'),
-        sort_keys=True,
-    ).encode('utf-8')).digest())
+    crv: EdVariant
