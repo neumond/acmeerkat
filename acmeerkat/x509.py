@@ -1,0 +1,115 @@
+import base64
+from collections import abc
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Self
+
+
+type ByteBuffer = bytes | bytearray | memoryview
+
+
+@dataclass(slots=True)
+class TlvReader:
+    b: ByteBuffer
+    off: int = 0
+
+    def peek(self, n: int) -> ByteBuffer:
+        return self.b[self.off:self.off + n]
+
+    def read(self, n: int) -> ByteBuffer:
+        r = self.b[self.off:self.off + n]
+        self.off += len(r)
+        return r
+
+    def read_length(self) -> int:
+        if (first := self.read(1)[0]) < 0x80:
+            return first
+        return int.from_bytes(self.read(first & 0x7F), 'big')
+
+    def read_tlv(self, require_tag: int | None = None) -> tuple[int, Self]:
+        tag = self.read(1)[0]
+        if require_tag is not None and tag != require_tag:
+            raise ValueError(f'Bad tag {tag}, expected {require_tag}')
+        length = self.read_length()
+        return tag, type(self)(self.read(length))
+
+    def iter_sequence_of_tlv(
+        self, require_tag: int | None = None,
+    ) -> abc.Iterator[tuple[int, Self]]:
+        while len(self.peek(1)) > 0:
+            yield self.read_tlv(require_tag)
+
+
+def _pem_to_der(pem: bytes) -> bytes:
+    return base64.b64decode(
+        pem
+        .strip(b'\n')
+        .removeprefix(b'-----BEGIN CERTIFICATE-----')
+        .removesuffix(b'-----END CERTIFICATE-----')
+        .replace(b'\n', b''))
+
+
+def _parse_time(tag: int, value: TlvReader) -> datetime:
+    s = bytes(value.b).decode('ascii')
+    if tag == 0x17:  # UTCTime: YYMMDDHHMMSSZ
+        year = int(s[0:2])
+        year += 2000 if year < 50 else 1900  # per spec
+        dt = datetime(
+            year, int(s[2:4]), int(s[4:6]),
+            int(s[6:8]), int(s[8:10]), int(s[10:12]),
+            tzinfo=timezone.utc)
+    elif tag == 0x18:  # GeneralizedTime: YYYYMMDDHHMMSSZ
+        dt = datetime(
+            int(s[0:4]), int(s[4:6]), int(s[6:8]),
+            int(s[8:10]), int(s[10:12]), int(s[12:14]),
+            tzinfo=timezone.utc)
+    else:
+        raise ValueError(f'Unexpected time tag: {tag:#x}')
+    return dt
+
+
+def _check_basic_constraints(extensions: TlvReader) -> bool:
+    for _, ext in extensions.iter_sequence_of_tlv(0x30):
+        _, oid = ext.read_tlv()
+        if oid.peek(100) != b'\x55\x1D\x13':  # 2.5.29.19, basic constraints
+            continue
+        if ext.peek(1) == b'\x01':
+            ext.read_tlv()  # optional `critical`
+        _, ext_val = ext.read_tlv()
+        _, basic_constraints = ext_val.read_tlv()
+        if basic_constraints.peek(1) == b'\x01':  # optonal boolean `cA`
+            _, ca = basic_constraints.read_tlv()
+            # 0xFF = TRUE, 0x00 = FALSE; leaf if cA=FALSE
+            return ca.peek(1) == b'\x00'
+    return True  # no info, it's leaf
+
+
+@dataclass(frozen=True)
+class CertInfo:
+    is_leaf: bool
+    not_before: datetime
+    not_after: datetime
+
+
+def parse_cert(pem: bytes) -> CertInfo:
+    der = memoryview(_pem_to_der(pem))
+    _, cert = TlvReader(der).read_tlv(0x30)
+    _, tbs = cert.read_tlv(0x30)  # `tbsCertificate`, first field of cert
+    if tbs.peek(1) == b'\xA0':  # optional `version`
+        tbs.read_tlv()
+    tbs.read_tlv()  # serialNumber
+    tbs.read_tlv()  # signature
+    tbs.read_tlv()  # issuer
+    _, validity = tbs.read_tlv(0x30)  # validity
+    tbs.read_tlv()  # subject
+    tbs.read_tlv()  # subjectPublicKeyInfo
+    is_leaf = True
+    while tbs.peek(1):
+        # optional `issuerUniqueID`, `subjectUniqueID`, `extensions`
+        tag, extensions = tbs.read_tlv()
+        if tag == 0xA3:
+            is_leaf = _check_basic_constraints(extensions.read_tlv()[1])
+            break
+    not_before = _parse_time(*validity.read_tlv())
+    not_after = _parse_time(*validity.read_tlv())
+    return CertInfo(is_leaf, not_before, not_after)
