@@ -7,7 +7,9 @@ from acmeerkat import BaseTokenChallenge
 
 __all__ = (
     'BaseHTTP01',
-    'ManualHTTP01', 'DictHTTP01', 'FileHTTP01',
+    'DictHTTP01',
+    'FileHTTP01',
+    'ManualHTTP01',
 )
 
 

@@ -4,14 +4,15 @@ from typing import Literal
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
-from acmeerkat import BaseHTTPSClient
+from acmeerkat import BaseHttpsClient
 
 
-__all__ = ('UrllibHTTPSClient', )
+__all__ = ('UrllibHttpsClient', )
 
 
 @dataclass
-class UrllibHTTPSClient(BaseHTTPSClient):
+class UrllibHttpsClient(BaseHttpsClient):
+    debug: bool = False
     timeout: float = 10.0
 
     def request(
@@ -22,11 +23,12 @@ class UrllibHTTPSClient(BaseHTTPSClient):
         send_headers: dict[str, str],
         return_headers: abc.Iterable[str],
     ) -> tuple[int, bytes | None, dict[str, str]]:
-        print('===========')
-        print('REQUEST', method, url)
-        for k, v in send_headers.items():
-            print(f'    {k}: {v}')
-        print(f'    {send_body!r}')
+        if self.debug:
+            print('===========')
+            print('REQUEST', method, url)
+            for k, v in send_headers.items():
+                print(f'    {k}: {v}')
+            print(f'    {send_body!r}')
         req = Request(url, method=method, headers=send_headers, data=send_body)
         try:
             resp = urlopen(req, timeout=self.timeout)
@@ -37,10 +39,11 @@ class UrllibHTTPSClient(BaseHTTPSClient):
             if (v := resp.getheader(h)):
                 hdrs[h] = v
         body = None if method == 'HEAD' else resp.read()
-        print('RESPONSE', resp.status)
-        for k, v in hdrs.items():
-            print(f'    {k}: {v}')
-        print(f'    {body!r}')
+        if self.debug:
+            print('RESPONSE', resp.status)
+            for k, v in hdrs.items():
+                print(f'    {k}: {v}')
+            print(f'    {body!r}')
         return (
             resp.status,
             body,

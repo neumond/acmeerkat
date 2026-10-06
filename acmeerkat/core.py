@@ -1,61 +1,32 @@
-import base64
-import contextlib
-import hashlib
 import json
-from collections import abc
-from dataclasses import dataclass, field
-from enum import Enum
+from collections.abc import Iterable
+from dataclasses import dataclass, field, InitVar
 from functools import cached_property
 from random import random
 from time import sleep
-from typing import (
-    cast, ClassVar, get_args, Literal, Required, Self, TypedDict, TypeGuard)
+from typing import ClassVar, Self
 
 from .error import AcmeError
-from . import error
+from .utils import b64_jose, bin_json_dumps, jws_serialize
+from . import abc, error, jwk, types as t
 
 
 __all__ = (
-    'BaseKVStorage', 'BaseHTTPSClient', 'BaseCrypto',
-    'KVNamespace', 'Algorithm', 'KeyPairBytes',
-    'KeyType', 'is_valid_key_type',
-    'CurveType', 'is_valid_curve_type',
-    'PublicKeyDict',
-    'b64_jose', 'JSONWebSignature', 'AcmeError',
-    'BaseChallenge', 'BaseTokenChallenge',
-    'ProviderAccount', 'CertUpdater',
+    'CertUpdater',
+    'KVNamespace',
+    'ProviderAccount',
 )
 
 
-USER_AGENT = 'Acmeerkat/0.1'
-COMPACT_JSON_SEP = (',', ':')
-
-
-def b64_jose(b):
-    return base64.urlsafe_b64encode(b).decode('utf-8').rstrip('=')
-
-
-def bin_json_dumps(d: dict, separators=COMPACT_JSON_SEP) -> bytes:
-    return json.dumps(d, separators=separators).encode('utf-8')
-
-
-def jws_serialize(d: dict, separators=COMPACT_JSON_SEP) -> str:
-    return b64_jose(bin_json_dumps(d, separators=separators))
-
-
-class BaseKVStorage:
-    def update(self, u: dict[bytes, bytes]) -> None:
-        "Assigning empty value b'' deletes the key"
-        raise NotImplementedError
-
-    def get(self, k: bytes) -> bytes:
-        "Non-existent key yields b''"
-        raise NotImplementedError
+"""
+Let's Encrypt actually differs from RFC8555:
+https://raw.githubusercontent.com/letsencrypt/boulder/main/docs/acme-divergences.md
+"""
 
 
 @dataclass
 class KVNamespace:
-    storage: BaseKVStorage
+    storage: abc.BaseKVStorage
     prefix: bytes = b''
 
     def update(self, u: dict[bytes, bytes]) -> None:
@@ -70,96 +41,12 @@ class KVNamespace:
         return type(self)(self.storage, self.prefix + prefix)
 
 
-class Algorithm(Enum):
-    # rfc7518
-    ES256 = 'ES256'  # ECDSA using P-256 and SHA-256
-
-
-KeyType = Literal['EC', 'RSA']
-
-
-def is_valid_key_type(kty: str) -> TypeGuard[KeyType]:
-    return kty in get_args(KeyType)
-
-
-CurveType = Literal['P-256']
-
-
-def is_valid_curve_type(crv: str) -> TypeGuard[CurveType]:
-    return crv in get_args(CurveType)
-
-
-PublicKeyDict = TypedDict('PublicKeyDict', {
-    # rfc7517, JSON Web Key
-    'kty': Required[KeyType],
-    'crv': CurveType,
-    'x': str,
-    'y': str,
-    'e': str,
-    'n': str,
-}, total=False)
-
-
-_JWK_THUMBPRINT_REQ_KEYS = {
-    'EC': frozenset(['crv', 'kty', 'x', 'y']),
-    'RSA': frozenset(['e', 'kty', 'n']),
-}
-
-
-def jwk_thumbprint(d: PublicKeyDict) -> str:
-    # JSON Web Key (JWK) Thumbprint, rfc7638
-    req_fs = _JWK_THUMBPRINT_REQ_KEYS[d['kty']]
-    return b64_jose(hashlib.sha256(json.dumps(
-        {k: v for k, v in d.items() if k in req_fs},
-        separators=(',', ':'),
-        sort_keys=True,
-    ).encode('utf-8')).digest())
-
-
-# should be openssl compatible
-type KeyPairBytes = bytes
-
-# rfc7518
-type JSONWebSignature = str
-
-
 @dataclass
-class BaseCrypto:
-    def generate_key_pair(self, a: Algorithm) -> KeyPairBytes:
-        raise NotImplementedError
-
-    def check_key_pair(self, key_pair: KeyPairBytes) -> bool:
-        raise NotImplementedError
-
-    def pubkey_params(self, key_pair: KeyPairBytes) -> PublicKeyDict:
-        raise NotImplementedError
-
-    def sign(self, key_pair: KeyPairBytes, data: bytes) -> JSONWebSignature:
-        raise NotImplementedError
-
-    def generate_csr(
-        self, key_pair: KeyPairBytes, domains: list[str],
-    ) -> bytes:
-        raise NotImplementedError
-
-
-AccountDict = TypedDict('AccountDict', {
-    '__Location': Required[str | None],
-    'status': Required[str],  # valid | deactivated | revoked
-    'contact': list[str],
-    'termsOfServiceAgreed': bool,
-    # orders: str
-    # TODO: externalAccountBinding: dict
-    # createdAt: str
-    # key: dict
-}, total=False)
-
-
-@dataclass
-class BaseHTTPSClient:
+class HttpsClientWrap:
     directory_url: str
-    user_agent: str = USER_AGENT
-    accept_language: str = 'en, *;q=0.5'  # localized error messages
+    https_client: abc.BaseHttpsClient
+    user_agent: str
+    accept_language: str
 
     _nonce: str | None = field(init=False, default=None)
 
@@ -171,21 +58,6 @@ class BaseHTTPSClient:
     CTYPE_HEADER: ClassVar[str] = 'Content-Type'
     ACCEPT_HEADER: ClassVar[str] = 'Accept'
 
-    def request(
-        self,
-        method: Literal['GET', 'POST', 'HEAD'],
-        url: str,
-        send_body: bytes | None,
-        send_headers: dict[str, str],
-        return_headers: abc.Iterable[str],
-    ) -> tuple[int, bytes | None, dict[str, str]]:
-        """
-        Returns (status, body, returned_headers)
-        Keys in result of return_headers must have the same case
-        If resp header doesn't exist, omit the entry in result
-        """
-        raise NotImplementedError
-
     def _def_hdrs(self) -> dict[str, str]:
         return {
             'User-Agent': self.user_agent,
@@ -195,7 +67,7 @@ class BaseHTTPSClient:
     def _resp(
         self,
         r: tuple[int, bytes | None, dict[str, str]],
-        capture_headers: abc.Iterable[str] = (),
+        capture_headers: Iterable[str] = (),
     ) -> dict | bytes:
         status, data, hdrs = r
         bad_status = not (200 <= status < 300)
@@ -227,19 +99,22 @@ class BaseHTTPSClient:
         return data
 
     @cached_property
-    def directory(self) -> dict:
-        r = self._resp(self.request(
+    def directory(self) -> t.DirectoryDict:
+        r = self._resp(self.https_client.request(
             'GET', self.directory_url,
             None,
             self._def_hdrs(),
             [self.CTYPE_HEADER]))
-        if not isinstance(r, dict):
-            raise Exception('Expected json response')
+        if not (
+            isinstance(r, dict)
+            and t.is_valid_directory_dict(r)
+        ):
+            raise ValueError('Invalid directory')
         return r
 
     def take_nonce(self) -> str:
         if not self._nonce:
-            self._resp(self.request(
+            self._resp(self.https_client.request(
                 'HEAD', self.directory['newNonce'],
                 None,
                 self._def_hdrs(),
@@ -251,14 +126,14 @@ class BaseHTTPSClient:
 
     def post(
         self, url: str, data: dict,
-        capture_headers: abc.Iterable[str] = (),
+        capture_headers: Iterable[str] = (),
         accept_pem_chain: bool = False,
     ) -> dict | bytes:
         h = self._def_hdrs()
         h[self.CTYPE_HEADER] = self.JOSE_JSON_MIME
         if accept_pem_chain:
             h[self.ACCEPT_HEADER] = self.PEM_CHAIN_MIME
-        return self._resp(self.request(
+        return self._resp(self.https_client.request(
             'POST', url,
             bin_json_dumps(data),
             h,
@@ -268,10 +143,15 @@ class BaseHTTPSClient:
 
 @dataclass
 class ProviderAccount:
+    directory_url: InitVar[str]
     contacts: list[str]  # list of urls, including 'mailto:'
     storage_ns: KVNamespace
-    https_client: BaseHTTPSClient  # TODO: transform into init-var
-    crypto: BaseCrypto
+    https_client: InitVar[abc.BaseHttpsClient]
+    crypto: abc.BaseCrypto
+
+    user_agent: InitVar[str] = 'Acmeerkat/0.1'
+    accept_language: InitVar[str] = 'en, *;q=0.5'  # localized error messages
+
     # on_failure: Callable
     # on_tos_update: Callable
     # this either blocks with error or just notifies about ToS updates
@@ -281,46 +161,73 @@ class ProviderAccount:
     auto_create_account: bool = True
     auto_update_account: bool = True
 
+    _hwrap: HttpsClientWrap = field(init=False)
+
+    def __post_init__(
+        self,
+        directory_url: str,
+        https_client: abc.BaseHttpsClient,
+        user_agent: str,
+        accept_language: str,
+    ):
+        self._hwrap = HttpsClientWrap(
+            directory_url,
+            https_client,
+            user_agent,
+            accept_language)
+
     @cached_property
-    def _key_pair(self) -> KeyPairBytes:
+    def _key_pair(self) -> t.KeyPairBytes:
         kp = self.storage_ns.get(b'keypair')
         if not kp:
-            # TODO: make alg a parameter
-            kp = self.crypto.generate_key_pair(Algorithm.ES256)
-            self.storage_ns.update({b'keypair': kp})
+            # TODO: make a parameter
+            kp = self.crypto.generate_key_pair(jwk.EcKeyParams(
+                crv=jwk.CurveType.P_256))
+            self.storage_ns.update({
+                b'alg': t.Algorithm.ES256.to_bytes(),
+                b'keypair': kp})
         if not self.crypto.check_key_pair(kp):
             raise Exception('Invalid key pair')
         return kp
 
     @cached_property
-    def _pubkey_params(self) -> PublicKeyDict:
-        return self.crypto.pubkey_params(self._key_pair)
+    def _alg(self) -> t.Algorithm:
+        _ = self._key_pair  # load key pair
+        return t.Algorithm.from_bytes(self.storage_ns.get(b'alg'))
+
+    @cached_property
+    def _json_web_pub_key(self) -> jwk.BaseJsonWebPubKey:
+        return self.crypto.json_web_pub_key(self._key_pair)
 
     @cached_property
     def _thumbprint(self) -> str:
-        return jwk_thumbprint(self._pubkey_params)
+        return jwk.thumbprint(self._json_web_pub_key)
 
     def _sign_request(self, d: dict) -> None:
         d['signature'] = self.crypto.sign(
-            self._key_pair, f"{d['protected']}.{d['payload']}".encode('ascii'))
+            self._alg, self._key_pair,
+            f"{d['protected']}.{d['payload']}".encode('ascii'))
 
-    def _call_new_account(self, payload: dict) -> AccountDict:
+    def _call_new_account(self, payload: dict) -> t.AccountDict:
         d = {
             'protected': jws_serialize({
                 'alg': 'ES256',  # TODO: alg depends on key_pair used
-                'jwk': self._pubkey_params,
-                'nonce': self.https_client.take_nonce(),
-                'url': self.https_client.directory['newAccount']}),
+                'jwk': self._json_web_pub_key,
+                'nonce': self._hwrap.take_nonce(),
+                'url': self._hwrap.directory['newAccount']}),
             'payload': jws_serialize(payload)}
         self._sign_request(d)
-        r = cast(AccountDict, self.https_client.post(
-            self.https_client.directory['newAccount'], d, ('Location', )))
-        if not isinstance(r, dict):
-            raise Exception('Expected json response')
+        r = self._hwrap.post(
+            self._hwrap.directory['newAccount'], d, ('Location', ))
+        if not (
+            isinstance(r, dict)
+            and t.is_valid_account_dict(r)
+        ):
+            raise ValueError('Invalid account')
         return r
 
     @cached_property
-    def account(self) -> AccountDict:
+    def account(self) -> t.AccountDict:
         try:
             a = self._call_new_account({
                 'onlyReturnExisting': True})
@@ -351,13 +258,13 @@ class ProviderAccount:
         return jws_serialize({
             'alg': 'ES256',  # TODO: alg depends on key_pair used
             'kid': self.account['__Location'],
-            'nonce': self.https_client.take_nonce(),
+            'nonce': self._hwrap.take_nonce(),
             'url': url})
 
     def _do_signed_request(
         self, url: str,
         payload: dict | str,
-        capture_headers: abc.Iterable[str] = (),
+        capture_headers: Iterable[str] = (),
     ) -> dict:
         d = {
             'protected': self._make_protected(url),
@@ -366,7 +273,7 @@ class ProviderAccount:
                 if isinstance(payload, str) else
                 jws_serialize(payload))}
         self._sign_request(d)
-        r = self.https_client.post(url, d, capture_headers)
+        r = self._hwrap.post(url, d, capture_headers)
         if not isinstance(r, dict):
             raise Exception('Expected json response')
         return r
@@ -376,57 +283,10 @@ class ProviderAccount:
             'protected': self._make_protected(url),
             'payload': ''}
         self._sign_request(d)
-        r = self.https_client.post(url, d, (), accept_pem_chain=True)
+        r = self._hwrap.post(url, d, (), accept_pem_chain=True)
         if not isinstance(r, bytes):
             raise Exception('Expected raw bytes response')
         return r
-
-
-ChallengeConfig = TypedDict('ChallengeConfig', {
-    'type': Required[str],
-    'url': Required[str],
-    'status': Required[str],
-    'token': str,
-    'issuer-domain-names': list[str],
-}, total=False)
-AuthzIdentifier = TypedDict('AuthzIdentifier', {
-    'type': Required[str],
-    'value': Required[str],
-}, total=True)
-
-
-class BaseChallenge:
-    TYPE: ClassVar[str] = NotImplemented
-
-    def _perform(
-        self,
-        identifier: AuthzIdentifier,
-        config: ChallengeConfig,
-        thumbprint: str,
-    ) -> contextlib.AbstractContextManager[None]:
-        raise NotImplementedError
-
-
-class BaseTokenChallenge(BaseChallenge):
-    def chal_set(self, name: str, content: str) -> None:
-        raise NotImplementedError
-
-    def chal_remove(self, name: str) -> None:
-        raise NotImplementedError
-
-    @contextlib.contextmanager
-    def _perform(
-        self,
-        identifier: AuthzIdentifier,
-        config: ChallengeConfig,
-        thumbprint: str,
-    ) -> abc.Iterator[None]:
-        token = config['token']
-        try:
-            self.chal_set(token, f'{token}.{thumbprint}')
-            yield
-        finally:
-            self.chal_remove(token)
 
 
 def _retry_delay(resp: dict) -> float:
@@ -444,14 +304,17 @@ class CertUpdater:
     # classic (90d) | tlsserver (45d) | shortlived (160h)
     profile: str
     account: ProviderAccount
-    challenges: list[BaseChallenge]  # sorted by priority
+    challenges: list[abc.BaseChallenge]  # sorted by priority
     storage_ns: KVNamespace
+    alg: t.Algorithm = t.Algorithm.ES256
+    key_params: jwk.BaseKeyParams = field(
+        default_factory=lambda: jwk.EcKeyParams(crv=jwk.CurveType.P_256))
     # deploy: Callable
     # on_failure: Callable
 
     def _find_chal_performer(
-        self, clist: list[ChallengeConfig],
-    ) -> tuple[BaseChallenge, ChallengeConfig]:
+        self, clist: list[t.ChallengeConfig],
+    ) -> tuple[abc.BaseChallenge, t.ChallengeConfig]:
         for performer in self.challenges:
             for c in clist:
                 if c['type'] != performer.TYPE:
@@ -510,7 +373,7 @@ class CertUpdater:
         else:
             # create new order
             order = self.account._do_signed_request(
-                self.account.https_client.directory['newOrder'], {
+                self.account._hwrap.directory['newOrder'], {
                     'identifiers': [
                         {'type': 'dns', 'value': d}
                         for d in self.domains],
@@ -533,9 +396,11 @@ class CertUpdater:
                 sleep(_retry_delay(order))
 
         if order['status'] == 'ready':
-            kp = self.account.crypto.generate_key_pair(Algorithm.ES256)
-            storage.update({b'keypair': kp})
-            csr = self.account.crypto.generate_csr(kp, self.domains)
+            kp = self.account.crypto.generate_key_pair(self.key_params)
+            storage.update({
+                b'alg': self.alg.to_bytes(),
+                b'keypair': kp})
+            csr = self.account.crypto.generate_csr(self.alg, kp, self.domains)
             order = self.account._do_signed_request(order['finalize'], {
                 'csr': b64_jose(csr),
             }, ('Retry-After', ))

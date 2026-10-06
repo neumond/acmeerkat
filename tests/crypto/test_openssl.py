@@ -1,7 +1,9 @@
+import base64
+
 import pytest
 
-from acmeerkat import Algorithm
-from acmeerkat.crypto.openssl import OpenSSLCrypto
+from acmeerkat import Algorithm, jwk
+from acmeerkat.crypto.openssl import OpenSslCrypto
 
 
 # rfc7518 appendix C
@@ -52,11 +54,49 @@ NIST CURVE: P-256
     }),
 ])
 def test_parse_pubkey(pktext, jsonv):
-    assert OpenSSLCrypto._parse_pubkey(pktext) == jsonv
+    assert OpenSslCrypto._parse_pubkey(pktext).to_json(False) == jsonv
 
 
-def test_gen_and_check():
-    c = OpenSSLCrypto()
-    kp = c.generate_key_pair(Algorithm.ES256)
+def _fit_bits(n: int, step: int) -> int:
+    if (mod := n % step) == 0:
+        return n
+    return n - mod + step
+
+
+@pytest.mark.parametrize('params,alg,sigsize', [
+    (jwk.EcKeyParams(jwk.CurveType.P_256), Algorithm.ES256, 256 * 2),
+    (jwk.EcKeyParams(jwk.CurveType.P_384), Algorithm.ES384, 384 * 2),
+    (
+        jwk.EcKeyParams(jwk.CurveType.P_521),
+        Algorithm.ES512, _fit_bits(521, 8) * 2),
+    (jwk.RsaKeyParams(bits=1024), Algorithm.RS256, 1024),
+    (jwk.RsaKeyParams(bits=2048), Algorithm.RS256, 2048),
+    (jwk.RsaKeyParams(bits=4096), Algorithm.RS256, 4096),
+    (jwk.RsaKeyParams(bits=2048), Algorithm.RS512, 2048),
+])
+def test_gen_check_sign(params, alg, sigsize):
+    c = OpenSslCrypto(debug=False)
+    kp = c.generate_key_pair(params)
+    assert len(kp) > 0
     assert c.check_key_pair(kp) is True
+    sgn = c.sign(alg, kp, b'hello world')
+    assert len(sgn) > 0
+    if sigsize is not None:
+        sgnbin = base64.urlsafe_b64decode(sgn + '====')
+        assert len(sgnbin) * 8 == sigsize
+    csr = c.generate_csr(alg, kp, ['example.org'])
+    assert len(csr) > 0
+
+
+def test_check_empty_bytes():
+    c = OpenSslCrypto()
     assert c.check_key_pair(b'') is False
+
+
+def test_rsa_signature_hashes():
+    c = OpenSslCrypto(debug=False)
+    kp = c.generate_key_pair(jwk.RsaKeyParams())
+    text = b'hello world'
+    sgn_256 = c.sign(Algorithm.RS256, kp, text)
+    sgn_512 = c.sign(Algorithm.RS512, kp, text)
+    assert sgn_256 != sgn_512
