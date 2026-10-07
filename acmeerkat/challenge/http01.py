@@ -6,18 +6,18 @@ from acmeerkat import BaseTokenChallenge
 
 
 __all__ = (
-    'BaseHTTP01',
-    'DictHTTP01',
-    'FileHTTP01',
-    'ManualHTTP01',
+    'BaseHttp01',
+    'DictHttp01',
+    'FileHttp01',
+    'ManualHttp01',
 )
 
 
-class BaseHTTP01(BaseTokenChallenge):
+class BaseHttp01(BaseTokenChallenge):
     TYPE: ClassVar[str] = 'http-01'
 
 
-class ManualHTTP01(BaseHTTP01):
+class ManualHttp01(BaseHttp01):
     def chal_set(self, name: str, content: str) -> None:
         print('Put challenge:')
         print(f'    File name: {name}')
@@ -32,7 +32,7 @@ class ManualHTTP01(BaseHTTP01):
 
 
 @dataclass
-class DictHTTP01(BaseHTTP01):
+class DictHttp01(BaseHttp01):
     d: dict[str, str]
 
     def chal_set(self, name: str, content: str) -> None:
@@ -43,7 +43,7 @@ class DictHTTP01(BaseHTTP01):
 
 
 @dataclass
-class FileHTTP01(BaseHTTP01):
+class FileHttp01(BaseHttp01):
     directory: Path
 
     def _check_name(self, name: str) -> None:

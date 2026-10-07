@@ -12,7 +12,8 @@ from acmeerkat import (
 from acmeerkat.crypto.openssl import OpenSslCrypto
 from acmeerkat.storage.file_pair import FilePairKVStorage
 from acmeerkat.https.urllib import UrllibHttpsClient
-from acmeerkat.challenge.http01 import ManualHTTP01
+from acmeerkat.challenge.http01 import ManualHttp01
+from acmeerkat.challenge.dnspersist01 import DnsPersist01
 
 
 crypto = OpenSslCrypto(debug=True)
@@ -63,17 +64,15 @@ acc = ProviderAccount(
 print('ACCOUNT', acc.account)
 # print(acc.update_contacts())
 # print(acc.rollover_key())
-print(acc.update_tos_agreement(False))
-exit()
+# print(acc.update_tos_agreement(False))
 
-# acc_json = acc._do_signed_request(acc.account['__Location'], '')
-# print(acc_json)
+# print('Put txt record `_validation-persist` on every domain:')
+# print(acc.dns_persist_01_record(wildcard=True))
 
-
-# cu = CertUpdater(
-#     domains=['test.neumond.name'],
-#     profile='tlsserver',
-#     account=acc,
-#     challenges=[ManualHTTP01()],
-#     storage_ns=KVNamespace(storage, b'certs/test.neumond.name/'))
-# cu._issue_new_certificate()
+cu = CertUpdater(
+    domains=['neumond.name', '*.neumond.name'],
+    profile='tlsserver',
+    account=acc,
+    challenges=[DnsPersist01(debug=True)],
+    storage_ns=KVNamespace(storage, b'certs/neumond.name/'))
+cu.issue_new_certificate()

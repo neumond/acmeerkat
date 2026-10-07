@@ -1,6 +1,7 @@
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field, InitVar
+from datetime import datetime
 from functools import cached_property
 from random import random
 from time import sleep
@@ -393,6 +394,20 @@ class ProviderAccount:
         return self._do_signed_request(self.account['__Location'], {
             'termsOfServiceAgreed': agreed})
 
+    def dns_persist_01_record(
+        self, issuer: str = 'letsencrypt.org',
+        wildcard: bool = False,
+        expires: datetime | None = None,
+    ) -> str:
+        parts = []
+        parts.append(issuer)
+        parts.append(f"accounturi={self.account['__Location']}")
+        if wildcard:
+            parts.append('policy=wildcard')
+        if expires:
+            parts.append(f'persistUntil={int(expires.timestamp())}')
+        return '; '.join(parts)
+
 
 def _retry_delay(resp: dict[Any, Any]) -> float:
     if (ra := resp.get('__Retry-After', None)):
@@ -464,7 +479,7 @@ class CertUpdater:
                     case _:
                         raise Exception(f'Invalid challenge: {resp}')
 
-    def _issue_new_certificate(
+    def issue_new_certificate(
         self,
         current_order_prefix: bytes = b'current_order/',
     ) -> None:
