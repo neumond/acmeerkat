@@ -1,3 +1,5 @@
+import base64
+import urllib.parse
 from pathlib import Path
 
 from acmeerkat import (
@@ -14,6 +16,7 @@ from acmeerkat.storage.file_pair import FilePairKVStorage
 from acmeerkat.https.urllib import UrllibHttpsClient
 from acmeerkat.challenge.http01 import ManualHttp01
 from acmeerkat.challenge.dnspersist01 import DnsPersist01
+from acmeerkat.pem import cert_chain_to_firefox_link
 
 
 crypto = OpenSslCrypto(debug=True)
@@ -43,8 +46,10 @@ def play_with_private_key_gen():
 
 
 # dump_storage(False)
-# play_with_private_key_gen()
-# exit()
+pem = storage.get(b'certs/neumond.name/current_order/cert_chain')
+# print(pem.decode('ascii'))
+print(cert_chain_to_firefox_link(pem))
+exit()
 
 acc = ProviderAccount(
     directory_url='https://acme-staging-v02.api.letsencrypt.org/directory',

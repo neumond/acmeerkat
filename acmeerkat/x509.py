@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 from typing import Self
 
 
+__all__ = (
+    'CertInfo',
+    'parse_cert',
+)
+
+
 type ByteBuffer = bytes | bytearray | memoryview
 
 

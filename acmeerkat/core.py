@@ -539,6 +539,6 @@ class CertUpdater:
 
         pem_chain = self.account._download_certificate_request(
             order['certificate'])
-        storage.update({b'cert_chain': pem_chain})
+        # storage.update({b'cert_chain': pem_chain})
 
-        print(pem_chain)
+        print(pem_chain.decode('ascii'))
