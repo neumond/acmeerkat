@@ -176,6 +176,8 @@ class FilePairKVStorage(BaseKVStorage):
         inact_path.write_bytes(b'')
 
     def update(self, u: dict[bytes, bytes]) -> None:
+        # TODO: not truly transactional
+        # add completed transaction marker at the end
         act_path, _ = self._active_inactive_paths()
         with act_path.open('ab') as f:
             fcntl.lockf(f, fcntl.LOCK_EX)

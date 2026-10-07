@@ -13,7 +13,7 @@ from acmeerkat import (
     EdJsonWebPubKey,
     EdKeyParams,
     EdVariant,
-    KeyPairBytes,
+    PrivateKey,
     RsaJsonWebPubKey,
     RsaKeyParams,
     RsaPssKeyParams,
@@ -45,7 +45,7 @@ class OpenSslCrypto(BaseCrypto):
     def _stderr(self) -> int | None:
         return None if self.debug else subprocess.DEVNULL
 
-    def generate_key_pair(self, params: BaseKeyParams) -> KeyPairBytes:
+    def generate_key_pair(self, params: BaseKeyParams) -> PrivateKey:
         gpk = []
         match params:
             case EcKeyParams():
@@ -83,14 +83,14 @@ class OpenSslCrypto(BaseCrypto):
         p = subprocess.run(
             [
                 *self.openssl_cmd, 'genpkey', *gpk,
-                '-outform', 'DER',
+                '-outform', 'PEM',
             ],
             stdout=subprocess.PIPE,
             stderr=self._stderr,
             check=True)
         return p.stdout
 
-    def check_key_pair(self, key_pair: KeyPairBytes) -> bool:
+    def check_key_pair(self, key_pair: PrivateKey) -> bool:
         p = subprocess.run(
             [
                 *self.openssl_cmd, 'pkey',
@@ -164,7 +164,7 @@ class OpenSslCrypto(BaseCrypto):
         raise ValueError('Unknown key type')
 
     def json_web_pub_key(
-        self, key_pair: KeyPairBytes,
+        self, key_pair: PrivateKey,
     ) -> BaseJsonWebPubKey:
         p = subprocess.run(
             [
@@ -182,7 +182,7 @@ class OpenSslCrypto(BaseCrypto):
     def sign(
         self,
         alg: Algorithm,
-        key_pair: KeyPairBytes,
+        key_pair: PrivateKey,
         data: bytes,
     ) -> bytes:
         cmd = []
@@ -246,7 +246,7 @@ class OpenSslCrypto(BaseCrypto):
     def generate_csr(
         self,
         alg: Algorithm,
-        key_pair: KeyPairBytes,
+        key_pair: PrivateKey,
         domains: list[str],
     ) -> bytes:
         cmd = []

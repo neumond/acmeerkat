@@ -34,8 +34,7 @@ from .types import (
     is_valid_account_dict,
     is_valid_directory_dict,
     JSONWebSignature,
-    KeyPairBytes,
-    PemPrivKey,
+    PrivateKey,
 )
 
 
@@ -74,6 +73,5 @@ __all__ = (
     'is_valid_account_dict',
     'is_valid_directory_dict',
     'JSONWebSignature',
-    'KeyPairBytes',
-    'PemPrivKey',
+    'PrivateKey',
 )

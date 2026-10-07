@@ -142,6 +142,33 @@ class HttpsClientWrap:
         ), capture_headers)
 
 
+def _check_alg_key_params(
+    a: t.Algorithm, key_params: jwk.BaseKeyParams,
+) -> None:
+    match a, key_params:
+        case (t.Algorithm.ES256, jwk.EcKeyParams(crv=jwk.EcType.P_256)):
+            return
+        case (t.Algorithm.ES384, jwk.EcKeyParams(crv=jwk.EcType.P_384)):
+            return
+        case (t.Algorithm.ES512, jwk.EcKeyParams(crv=jwk.EcType.P_521)):
+            return
+        case (t.Algorithm.EdDSA, jwk.EdKeyParams()):
+            return
+        case (
+            t.Algorithm.RS256 | t.Algorithm.RS384 | t.Algorithm.RS512,
+            jwk.RsaKeyParams(),
+        ) if not isinstance(key_params, jwk.RsaPssKeyParams):
+            return
+        case (
+            t.Algorithm.PS256 | t.Algorithm.PS384 | t.Algorithm.PS512,
+            jwk.RsaPssKeyParams(),
+        ):
+            return
+    raise ValueError(
+        'Invalid combination of Algorithm and KeyParams: '
+        f'{a} + {key_params}')
+
+
 # too many parameters to guarantee stable order, therefore kw_only
 @dataclass(kw_only=True)
 class ProviderAccount:
@@ -179,6 +206,7 @@ class ProviderAccount:
         user_agent: str,
         accept_language: str,
     ) -> None:
+        _check_alg_key_params(self.alg, self.key_params)
         self._hwrap = HttpsClientWrap(
             directory_url,
             https_client,
@@ -186,7 +214,7 @@ class ProviderAccount:
             accept_language)
 
     @cached_property
-    def _key_pair(self) -> t.KeyPairBytes:
+    def _key_pair(self) -> t.PrivateKey:
         kp = self.storage_ns.get(b'keypair')
         if not kp:
             if not self.auto_create_account:
@@ -249,7 +277,7 @@ class ProviderAccount:
 
     def _sign_with_alg_key(
         self, protected: str, payload: str,
-        alg: t.Algorithm, kp: t.KeyPairBytes,
+        alg: t.Algorithm, kp: t.PrivateKey,
     ) -> str:
         return b64_jose(self.crypto.sign(
             alg, kp, f'{protected}.{payload}'.encode('ascii')))
@@ -374,7 +402,11 @@ class ProviderAccount:
         try:
             resp = self._do_signed_request(
                 self._hwrap.directory['keyChange'], inner)
-        except (error.BadSignatureAlgorithm, error.BadPublicKey) as e:
+        except (
+            error.BadSignatureAlgorithm,  # algorithm not supported
+            error.BadPublicKey,  # bad parameters, e.g. low RSA bits
+            error.Malformed,  # algorithm-keypair inconsistency
+        ) as e:
             self._drop_rollover_key()
             raise e
 
@@ -441,8 +473,8 @@ class CertUpdater:
     key_params: jwk.BaseKeyParams = field(
         default_factory=lambda: jwk.EcKeyParams(crv=jwk.EcType.P_256))
 
-    # deploy: Callable
-    # on_failure: Callable
+    def __post_init__(self) -> None:
+        _check_alg_key_params(self.alg, self.key_params)
 
     def _find_chal_performer(
         self, clist: list[t.ChallengeConfig],

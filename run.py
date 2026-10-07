@@ -26,7 +26,7 @@ https_client = UrllibHttpsClient(debug=True)
 
 def dump_storage(full=False):
     for k, v in storage._data.items():
-        print(k, v if full else v[:50])
+        print(k, ':', v if full else v[:50])
 
 
 def play_with_private_key_gen():
@@ -45,11 +45,9 @@ def play_with_private_key_gen():
         print(crypto.sign(alg, kp, b'hello world'))
 
 
+# play_with_private_key_gen()
 # dump_storage(False)
-pem = storage.get(b'certs/neumond.name/current_order/cert_chain')
-# print(pem.decode('ascii'))
-print(cert_chain_to_firefox_link(pem))
-exit()
+# exit()
 
 acc = ProviderAccount(
     directory_url='https://acme-staging-v02.api.letsencrypt.org/directory',
@@ -66,9 +64,12 @@ acc = ProviderAccount(
 #     b'keypair': crypto.generate_key_pair(acc.key_params)})
 # acc._reload_alg_key()
 
+dump_storage(False)
 print('ACCOUNT', acc.account)
-# print(acc.update_contacts())
 # print(acc.rollover_key())
+dump_storage(False)
+exit()
+# print(acc.update_contacts())
 # print(acc.update_tos_agreement(False))
 
 # print('Put txt record `_validation-persist` on every domain:')

@@ -4,8 +4,7 @@ from typing import ClassVar, Literal
 
 from .jwk import BaseJsonWebPubKey, BaseKeyParams
 from .types import (
-    Algorithm, AuthzIdentifier, ChallengeConfig,
-    KeyPairBytes, PemPrivKey)
+    Algorithm, AuthzIdentifier, ChallengeConfig, PrivateKey)
 
 
 __all__ = (
@@ -51,26 +50,23 @@ class BaseHttpsClient:
 
 
 class BaseCrypto:
-    def generate_key_pair(self, params: BaseKeyParams) -> KeyPairBytes:
+    def generate_key_pair(self, params: BaseKeyParams) -> PrivateKey:
         raise NotImplementedError
 
-    def check_key_pair(self, key_pair: KeyPairBytes) -> bool:
+    def check_key_pair(self, key_pair: PrivateKey) -> bool:
         raise NotImplementedError
 
-    def json_web_pub_key(self, key_pair: KeyPairBytes) -> BaseJsonWebPubKey:
-        raise NotImplementedError
-
-    def pem_private_key(self, key_pair: KeyPairBytes) -> PemPrivKey:
+    def json_web_pub_key(self, key_pair: PrivateKey) -> BaseJsonWebPubKey:
         raise NotImplementedError
 
     def sign(
-        self, alg: Algorithm, key_pair: KeyPairBytes, data: bytes,
+        self, alg: Algorithm, key_pair: PrivateKey, data: bytes,
     ) -> bytes:
         # suitable for rfc7518 json web signature, but without b64 encoding
         raise NotImplementedError
 
     def generate_csr(
-        self, alg: Algorithm, key_pair: KeyPairBytes, domains: list[str],
+        self, alg: Algorithm, key_pair: PrivateKey, domains: list[str],
     ) -> bytes:
         raise NotImplementedError
 

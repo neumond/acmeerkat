@@ -5,15 +5,14 @@ from typing import Any, Literal, get_args, Required, Self, TypedDict, TypeGuard
 __all__ = (
     'AccountDict',
     'AccountStatus',
+    'Algorithm',
     'AuthzIdentifier',
     'ChallengeConfig',
     'DirectoryDict',
     'is_valid_account_dict',
     'is_valid_directory_dict',
     'JSONWebSignature',
-    'KeyPairBytes',
-    'PemPrivKey',
-    'Algorithm',
+    'PrivateKey',
 )
 
 
@@ -82,11 +81,8 @@ class Algorithm(Enum):
         return cls(b.decode('ascii'))
 
 
-# opaque data blob specific to BaseCrypto subclass
-type KeyPairBytes = bytes
-
-# it's always ascii-encoded, no need to be a str
-type PemPrivKey = bytes
+# PEM-encoded PKCS#8 private key
+type PrivateKey = bytes
 
 # rfc7518
 type JSONWebSignature = str
