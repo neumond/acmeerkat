@@ -283,6 +283,12 @@ class ProviderAccount:
             'nonce': self._hwrap.take_nonce(),
             'url': url})
 
+    def _update_account(self, a: dict[Any, Any]) -> t.AccountDict:
+        if not t.is_valid_account_dict(a):
+            raise ValueError(f'Invalid account: {a!r}')
+        self.account = a
+        return a
+
     # half-protected methods, used by CertUpdater
 
     def _do_signed_request(
@@ -373,7 +379,7 @@ class ProviderAccount:
             raise e
 
         self._switch_to_rollover_key()
-        return resp
+        return self._update_account(resp)
 
     def deactivate(self, drop_key: bool = True) -> t.AccountDict:
         resp = self._do_signed_request(self.account['__Location'], {
@@ -382,17 +388,19 @@ class ProviderAccount:
             self.storage_ns.update({
                 b'alg': b'',
                 b'keypair': b''})
-        return resp
+        return self._update_account(resp)
 
     def update_contacts(self) -> t.AccountDict:
         # NOTE: does nothing on LE
-        return self._do_signed_request(self.account['__Location'], {
+        resp = self._do_signed_request(self.account['__Location'], {
             'contact': self.contacts})
+        return self._update_account(resp)
 
     def update_tos_agreement(self, agreed: bool = True) -> t.AccountDict:
         # NOTE: does nothing on LE, even with agreed=False
-        return self._do_signed_request(self.account['__Location'], {
+        resp = self._do_signed_request(self.account['__Location'], {
             'termsOfServiceAgreed': agreed})
+        return self._update_account(resp)
 
     def dns_persist_01_record(
         self, issuer: str = 'letsencrypt.org',
