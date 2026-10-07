@@ -149,9 +149,6 @@ class ProviderAccount:
     https_client: InitVar[abc.BaseHttpsClient]
     crypto: abc.BaseCrypto
 
-    user_agent: InitVar[str] = 'Acmeerkat/0.1'
-    accept_language: InitVar[str] = 'en, *;q=0.5'  # localized error messages
-
     # on_failure: Callable
     # on_tos_update: Callable
     # this either blocks with error or just notifies about ToS updates
@@ -159,7 +156,16 @@ class ProviderAccount:
     # TODO:
     # auto_accept_tos: bool
     auto_create_account: bool = True
-    auto_update_account: bool = True
+
+    # parameters for account key pair
+    # used on account creation or key rollover
+    # otherwise latest data from storage wins
+    alg: t.Algorithm = t.Algorithm.ES256
+    key_params: jwk.BaseKeyParams = field(
+        default_factory=lambda: jwk.EcKeyParams(crv=jwk.EcType.P_256))
+
+    user_agent: InitVar[str] = 'Acmeerkat/0.1'
+    accept_language: InitVar[str] = 'en, *;q=0.5'  # localized error messages
 
     _hwrap: HttpsClientWrap = field(init=False)
 
@@ -181,10 +187,9 @@ class ProviderAccount:
         kp = self.storage_ns.get(b'keypair')
         if not kp:
             # TODO: make a parameter
-            kp = self.crypto.generate_key_pair(jwk.EcKeyParams(
-                crv=jwk.EcType.P_256))
+            kp = self.crypto.generate_key_pair(self.key_params)
             self.storage_ns.update({
-                b'alg': t.Algorithm.ES256.to_bytes(),
+                b'alg': self.alg.to_bytes(),
                 b'keypair': kp})
         if not self.crypto.check_key_pair(kp):
             raise Exception('Invalid key pair')
@@ -211,8 +216,8 @@ class ProviderAccount:
     def _call_new_account(self, payload: dict[Any, Any]) -> t.AccountDict:
         d = {
             'protected': jws_serialize({
-                'alg': 'ES256',  # TODO: alg depends on key_pair used
-                'jwk': self._json_web_pub_key,
+                'alg': self._alg.value,
+                'jwk': self._json_web_pub_key.to_json(),
                 'nonce': self._hwrap.take_nonce(),
                 'url': self._hwrap.directory['newAccount']}),
             'payload': jws_serialize(payload)}
@@ -306,9 +311,12 @@ class CertUpdater:
     account: ProviderAccount
     challenges: list[abc.BaseChallenge]  # sorted by priority
     storage_ns: KVNamespace
+
+    # parameters for certificate key pair
     alg: t.Algorithm = t.Algorithm.ES256
     key_params: jwk.BaseKeyParams = field(
         default_factory=lambda: jwk.EcKeyParams(crv=jwk.EcType.P_256))
+
     # deploy: Callable
     # on_failure: Callable
 
