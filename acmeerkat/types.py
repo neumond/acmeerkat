@@ -96,7 +96,8 @@ DirectoryDict = TypedDict('DirectoryDict', {
     'newAccount': Required[str],
     'newNonce': Required[str],
     'newOrder': Required[str],
-    # TODO: keyChange, meta, renewalInfo, revokeCert
+    'keyChange': Required[str],
+    # TODO: meta, renewalInfo, revokeCert
 }, total=False)
 
 
@@ -105,7 +106,8 @@ def is_valid_directory_dict(d: dict[str, Any]) -> TypeGuard[DirectoryDict]:
         isinstance(d, dict)
         and isinstance(d.get('newAccount'), str)
         and isinstance(d.get('newNonce'), str)
-        and isinstance(d.get('newOrder'), str))
+        and isinstance(d.get('newOrder'), str)
+        and isinstance(d.get('keyChange'), str))
 
 
 AccountStatus = Literal['valid', 'deactivated', 'revoked']

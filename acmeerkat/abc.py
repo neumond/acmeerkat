@@ -19,7 +19,10 @@ __all__ = (
 
 class BaseKVStorage:
     def update(self, u: dict[bytes, bytes]) -> None:
-        "Assigning empty value b'' deletes the key"
+        """
+        Should be transactional: apply all or nothing
+        Assigning empty value b'' deletes the key
+        """
         raise NotImplementedError
 
     def get(self, k: bytes) -> bytes:

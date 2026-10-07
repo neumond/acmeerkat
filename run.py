@@ -7,6 +7,7 @@ from acmeerkat import (
     CertUpdater,
     EcKeyParams,
     EcType,
+    RsaKeyParams,
 )
 from acmeerkat.crypto.openssl import OpenSslCrypto
 from acmeerkat.storage.file_pair import FilePairKVStorage
@@ -19,9 +20,9 @@ storage = FilePairKVStorage(Path('kv1.dat'), Path('kv2.dat'))
 https_client = UrllibHttpsClient(debug=True)
 
 
-def dump_storage():
+def dump_storage(full=False):
     for k, v in storage._data.items():
-        print(k, v[:50])
+        print(k, v if full else v[:50])
 
 
 def play_with_private_key_gen():
@@ -40,18 +41,29 @@ def play_with_private_key_gen():
         print(crypto.sign(alg, kp, b'hello world'))
 
 
-# dump_storage()
+# dump_storage(False)
 # play_with_private_key_gen()
 # exit()
 
 acc = ProviderAccount(
     directory_url='https://acme-staging-v02.api.letsencrypt.org/directory',
-    contacts=[],
     storage_ns=KVNamespace(storage, b'staging_account/'),
     https_client=https_client,
-    crypto=crypto)
+    crypto=crypto,
+    auto_create_account=False,
+    alg=Algorithm.ES256,
+    key_params=EcKeyParams(crv=EcType.P_256))
+
+# replace existing key
+# acc.storage_ns.update({
+#     b'alg': acc.alg.to_bytes(),
+#     b'keypair': crypto.generate_key_pair(acc.key_params)})
+# acc._reload_alg_key()
+
 print('ACCOUNT', acc.account)
-acc.rollover_key()
+# print(acc.update_contacts())
+# print(acc.rollover_key())
+print(acc.update_tos_agreement(False))
 exit()
 
 # acc_json = acc._do_signed_request(acc.account['__Location'], '')

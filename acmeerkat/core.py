@@ -141,25 +141,27 @@ class HttpsClientWrap:
         ), capture_headers)
 
 
-@dataclass
+# too many parameters to guarantee stable order, therefore kw_only
+@dataclass(kw_only=True)
 class ProviderAccount:
     directory_url: InitVar[str]
-    contacts: list[str]  # list of urls, including 'mailto:'
     storage_ns: KVNamespace
     https_client: InitVar[abc.BaseHttpsClient]
     crypto: abc.BaseCrypto
 
-    # on_failure: Callable
-    # on_tos_update: Callable
-    # this either blocks with error or just notifies about ToS updates
-    # no default value on purpose, you have to decide
-    # TODO:
-    # auto_accept_tos: bool
+    # list of URIs, possibly with 'mailto:' scheme
+    # NOTE: LE doesn't use or store this field anyway
+    contacts: list[str] = field(default_factory=list)
     auto_create_account: bool = True
 
     # parameters for account key pair
     # used on account creation or key rollover
     # otherwise latest data from storage wins
+    #
+    # As of oct 2026 on LE Staging:
+    # Unable to validate JWS ... expected one of [RS256 ES256 ES384 ES512]
+    # Unable to validate JWS ... (RSA) key size not supported: 1024
+    # RS256 + 2048: fine
     alg: t.Algorithm = t.Algorithm.ES256
     key_params: jwk.BaseKeyParams = field(
         default_factory=lambda: jwk.EcKeyParams(crv=jwk.EcType.P_256))
@@ -186,7 +188,9 @@ class ProviderAccount:
     def _key_pair(self) -> t.KeyPairBytes:
         kp = self.storage_ns.get(b'keypair')
         if not kp:
-            # TODO: make a parameter
+            if not self.auto_create_account:
+                raise Exception(
+                    'No account key available, turn on auto_create_account')
             kp = self.crypto.generate_key_pair(self.key_params)
             self.storage_ns.update({
                 b'alg': self.alg.to_bytes(),
@@ -208,10 +212,50 @@ class ProviderAccount:
     def _thumbprint(self) -> str:
         return self._json_web_pub_key.thumbprint()
 
+    def _reload_alg_key(self) -> None:
+        try:
+            del self._key_pair
+        except AttributeError:
+            pass
+        try:
+            del self._alg
+        except AttributeError:
+            pass
+        try:
+            del self._json_web_pub_key
+        except AttributeError:
+            pass
+        try:
+            del self._thumbprint
+        except AttributeError:
+            pass
+
+    def _has_rollover_key(self) -> bool:
+        return bool(self.storage_ns.get(b'rollover/keypair'))
+
+    def _drop_rollover_key(self) -> None:
+        self.storage_ns.update({
+            b'rollover/alg': b'',
+            b'rollover/keypair': b''})
+
+    def _switch_to_rollover_key(self) -> None:
+        self.storage_ns.update({
+            b'alg': self.storage_ns.get(b'rollover/alg'),
+            b'keypair': self.storage_ns.get(b'rollover/keypair'),
+            b'rollover/alg': b'',
+            b'rollover/keypair': b''})
+        self._reload_alg_key()
+
+    def _sign_with_alg_key(
+        self, protected: str, payload: str,
+        alg: t.Algorithm, kp: t.KeyPairBytes,
+    ) -> str:
+        return b64_jose(self.crypto.sign(
+            alg, kp, f'{protected}.{payload}'.encode('ascii')))
+
     def _sign_request(self, d: dict[Any, Any]) -> None:
-        d['signature'] = b64_jose(self.crypto.sign(
-            self._alg, self._key_pair,
-            f"{d['protected']}.{d['payload']}".encode('ascii')))
+        d['signature'] = self._sign_with_alg_key(
+            d['protected'], d['payload'], self._alg, self._key_pair)
 
     def _call_new_account(self, payload: dict[Any, Any]) -> t.AccountDict:
         d = {
@@ -231,40 +275,14 @@ class ProviderAccount:
             raise ValueError('Invalid account')
         return r
 
-    @cached_property
-    def account(self) -> t.AccountDict:
-        try:
-            a = self._call_new_account({
-                'onlyReturnExisting': True})
-        except error.AccountDoesNotExist as e:
-            if not self.auto_create_account:
-                raise e
-            a = self._call_new_account({
-                'termsOfServiceAgreed': True,
-                'contact': self.contacts})
-
-        if (st := a.get('status')) != 'valid':
-            raise Exception(f'Bad account status: {st}')
-        if not a.get('__Location'):
-            raise Exception('Unknown account location')
-        # TODO: update account profile
-        # TODO: auto change key algorithm
-        return a
-
-    def rollover_key(self) -> None:
-        # TODO: implement
-        ...
-
-    def deactivate(self) -> None:
-        # TODO: implement
-        ...
-
     def _make_protected(self, url: str) -> str:
         return jws_serialize({
-            'alg': 'ES256',  # TODO: alg depends on key_pair used
+            'alg': self._alg.value,
             'kid': self.account['__Location'],
             'nonce': self._hwrap.take_nonce(),
             'url': url})
+
+    # half-protected methods, used by CertUpdater
 
     def _do_signed_request(
         self, url: str,
@@ -293,6 +311,88 @@ class ProviderAccount:
             raise Exception('Expected raw bytes response')
         return r
 
+    # public methods & properties
+
+    # TODO: expose directory?
+
+    @cached_property
+    def account(self) -> t.AccountDict:
+        while True:
+            try:
+                a = self._call_new_account({
+                    'onlyReturnExisting': True})
+            except error.AccountDoesNotExist as e:
+                if self._has_rollover_key():
+                    self._switch_to_rollover_key()
+                    continue
+                if not self.auto_create_account:
+                    raise e
+                a = self._call_new_account({
+                    'termsOfServiceAgreed': True,
+                    'contact': self.contacts})
+            else:
+                if self._has_rollover_key():
+                    self._drop_rollover_key()
+            break
+        if (st := a.get('status')) != 'valid':
+            raise Exception(f'Bad account status: {st}')
+        if not a.get('__Location'):
+            raise Exception('Unknown account location')
+        # TODO: update account profile
+        return a
+
+    def rollover_key(self) -> t.AccountDict:
+        _ = self.account  # preload account before generating new key
+
+        new_alg = self.alg
+        new_kp = self.crypto.generate_key_pair(self.key_params)
+        # store new key nearby, do not rewrite existing key
+        self.storage_ns.update({
+            b'rollover/alg': new_alg.to_bytes(),
+            b'rollover/keypair': new_kp})
+
+        inner = {
+            'protected': jws_serialize({
+                'alg': new_alg.value,
+                'jwk': self.crypto.json_web_pub_key(new_kp).to_json(),
+                'url': self._hwrap.directory['keyChange'],
+            }),
+            'payload': jws_serialize({
+                'account': self.account['__Location'],
+                'oldKey': self._json_web_pub_key.to_json(),
+            })}
+        inner['signature'] = self._sign_with_alg_key(
+            inner['protected'], inner['payload'], new_alg, new_kp)
+
+        try:
+            resp = self._do_signed_request(
+                self._hwrap.directory['keyChange'], inner)
+        except (error.BadSignatureAlgorithm, error.BadPublicKey) as e:
+            self._drop_rollover_key()
+            raise e
+
+        self._switch_to_rollover_key()
+        return resp
+
+    def deactivate(self, drop_key: bool = True) -> t.AccountDict:
+        resp = self._do_signed_request(self.account['__Location'], {
+            'status': 'deactivated'})
+        if drop_key:
+            self.storage_ns.update({
+                b'alg': b'',
+                b'keypair': b''})
+        return resp
+
+    def update_contacts(self) -> t.AccountDict:
+        # NOTE: does nothing on LE
+        return self._do_signed_request(self.account['__Location'], {
+            'contact': self.contacts})
+
+    def update_tos_agreement(self, agreed: bool = True) -> t.AccountDict:
+        # NOTE: does nothing on LE, even with agreed=False
+        return self._do_signed_request(self.account['__Location'], {
+            'termsOfServiceAgreed': agreed})
+
 
 def _retry_delay(resp: dict[Any, Any]) -> float:
     if (ra := resp.get('__Retry-After', None)):
@@ -300,7 +400,8 @@ def _retry_delay(resp: dict[Any, Any]) -> float:
     return 5. + random() * 2.
 
 
-@dataclass
+# too many parameters to guarantee stable order, therefore kw_only
+@dataclass(kw_only=True)
 class CertUpdater:
     # TODO: eventually support IPs
     domains: list[str]
