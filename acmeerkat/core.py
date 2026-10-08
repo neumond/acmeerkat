@@ -8,7 +8,7 @@ from time import sleep
 from typing import Any, ClassVar, Self
 
 from .error import AcmeError
-from .utils import b64_jose, bin_json_dumps, jws_serialize
+from .utils import b64_jose, bin_json_dumps, jws_serialize, is_valid_domain
 from . import abc, error, jwk, types as t
 
 
@@ -476,6 +476,10 @@ class CertUpdater:
 
     def __post_init__(self) -> None:
         _check_alg_key_params(self.alg, self.key_params)
+        for d in self.domains:
+            if not is_valid_domain(d):
+                raise ValueError(
+                    f'Invalid domain {d!r}, convert IDN into punycode')
 
     def _find_chal_performer(
         self, clist: list[t.ChallengeConfig],
