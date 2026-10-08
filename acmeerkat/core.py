@@ -293,11 +293,11 @@ class ProviderAccount:
                 'alg': self._alg.value,
                 'jwk': self._json_web_pub_key.to_json(),
                 'nonce': self._hwrap.take_nonce(),
-                'url': self._hwrap.directory['newAccount']}),
+                'url': self.directory['newAccount']}),
             'payload': jws_serialize(payload)}
         self._sign_request(d)
         r = self._hwrap.post(
-            self._hwrap.directory['newAccount'], d, ('Location', ))
+            self.directory['newAccount'], d, ('Location', ))
         if not (
             isinstance(r, dict)
             and t.is_valid_account_dict(r)
@@ -349,7 +349,9 @@ class ProviderAccount:
 
     # public methods & properties
 
-    # TODO: expose directory?
+    @property
+    def directory(self) -> t.DirectoryDict:
+        return self._hwrap.directory
 
     @cached_property
     def account(self) -> t.AccountDict:
@@ -391,7 +393,7 @@ class ProviderAccount:
             'protected': jws_serialize({
                 'alg': new_alg.value,
                 'jwk': self.crypto.json_web_pub_key(new_kp).to_json(),
-                'url': self._hwrap.directory['keyChange'],
+                'url': self.directory['keyChange'],
             }),
             'payload': jws_serialize({
                 'account': self.account['__Location'],
@@ -402,7 +404,7 @@ class ProviderAccount:
 
         try:
             resp = self._do_signed_request(
-                self._hwrap.directory['keyChange'], inner)
+                self.directory['keyChange'], inner)
         except (
             error.BadSignatureAlgorithm,  # algorithm not supported
             error.BadPublicKey,  # bad parameters, e.g. low RSA bits
@@ -542,7 +544,7 @@ class CertUpdater:
         else:
             # create new order
             order = self.account._do_signed_request(
-                self.account._hwrap.directory['newOrder'], {
+                self.account.directory['newOrder'], {
                     'identifiers': [
                         {'type': 'dns', 'value': d}
                         for d in self.domains],

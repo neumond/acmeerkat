@@ -107,7 +107,6 @@ class OpenSslCrypto(BaseCrypto):
 
     @staticmethod
     def _parse_pubkey(t: str) -> BaseJsonWebPubKey:
-        print(t)
         section: str = ''
         hex_section_parts: dict[str, list[bytes]] = {}
         single_line_sections = {}

@@ -48,7 +48,7 @@ def play_with_private_key_gen():
 
 
 def play_with_csr():
-    alg = Algorithm.PS512
+    alg = Algorithm.PS256
     key_params = RsaPssKeyParams(alg=alg)
 
     kp = crypto.generate_key_pair(key_params)
@@ -65,8 +65,8 @@ def play_with_csr():
 
 # play_with_private_key_gen()
 # dump_storage(False)
-play_with_csr()
-exit()
+# play_with_csr()
+# exit()
 
 acc = ProviderAccount(
     directory_url='https://acme-staging-v02.api.letsencrypt.org/directory',
@@ -77,6 +77,7 @@ acc = ProviderAccount(
     alg=Algorithm.ES256,
     key_params=EcKeyParams(crv=EcType.P_256))
 
+print('DIRECTORY', acc.directory)
 print('ACCOUNT', acc.account)
 # print(acc.rollover_key())
 dump_storage(False)
