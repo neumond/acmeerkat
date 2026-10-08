@@ -1,4 +1,5 @@
 import base64
+import subprocess
 import urllib.parse
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from acmeerkat import (
     EcKeyParams,
     EcType,
     RsaKeyParams,
+    RsaPssKeyParams,
 )
 from acmeerkat.crypto.openssl import OpenSslCrypto
 from acmeerkat.storage.file_pair import FilePairKVStorage
@@ -45,9 +47,26 @@ def play_with_private_key_gen():
         print(crypto.sign(alg, kp, b'hello world'))
 
 
+def play_with_csr():
+    alg = Algorithm.PS512
+    key_params = RsaPssKeyParams(alg=alg)
+
+    kp = crypto.generate_key_pair(key_params)
+    csr = crypto.generate_csr(alg, kp, ['example.org'])
+    # print(csr)
+
+    subprocess.run(
+        [
+            'openssl', 'req', '-inform', 'DER',
+            '-in', '/dev/stdin', '-noout', '-text'],
+        input=csr,
+        check=True)
+
+
 # play_with_private_key_gen()
 # dump_storage(False)
-# exit()
+play_with_csr()
+exit()
 
 acc = ProviderAccount(
     directory_url='https://acme-staging-v02.api.letsencrypt.org/directory',
@@ -58,13 +77,6 @@ acc = ProviderAccount(
     alg=Algorithm.ES256,
     key_params=EcKeyParams(crv=EcType.P_256))
 
-# replace existing key
-# acc.storage_ns.update({
-#     b'alg': acc.alg.to_bytes(),
-#     b'keypair': crypto.generate_key_pair(acc.key_params)})
-# acc._reload_alg_key()
-
-dump_storage(False)
 print('ACCOUNT', acc.account)
 # print(acc.rollover_key())
 dump_storage(False)
@@ -80,5 +92,7 @@ cu = CertUpdater(
     profile='tlsserver',
     account=acc,
     challenges=[DnsPersist01(debug=True)],
-    storage_ns=KVNamespace(storage, b'certs/neumond.name/'))
+    storage_ns=KVNamespace(storage, b'certs/neumond.name/RS256/'),
+    alg=Algorithm.RS256,
+    key_params=RsaKeyParams(primes=3))
 cu.issue_new_certificate()

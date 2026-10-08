@@ -159,10 +159,11 @@ def _check_alg_key_params(
             jwk.RsaKeyParams(),
         ) if not isinstance(key_params, jwk.RsaPssKeyParams):
             return
-        case (
-            t.Algorithm.PS256 | t.Algorithm.PS384 | t.Algorithm.PS512,
-            jwk.RsaPssKeyParams(),
-        ):
+        case (t.Algorithm.PS256, jwk.RsaPssKeyParams(alg=t.Algorithm.PS256)):
+            return
+        case (t.Algorithm.PS384, jwk.RsaPssKeyParams(alg=t.Algorithm.PS384)):
+            return
+        case (t.Algorithm.PS512, jwk.RsaPssKeyParams(alg=t.Algorithm.PS512)):
             return
     raise ValueError(
         'Invalid combination of Algorithm and KeyParams: '

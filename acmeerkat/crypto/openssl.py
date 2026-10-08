@@ -32,6 +32,16 @@ ALG_EXPLICIT_HASH = {
     Algorithm.PS384: '-sha384',
     Algorithm.PS512: '-sha512',
 }
+RSA_PSS_PARAMS = {
+    Algorithm.PS256: ('sha256', '32'),
+    Algorithm.PS384: ('sha384', '48'),
+    Algorithm.PS512: ('sha512', '64'),
+}
+RSA_PSS_HASHALG = {
+    'SHA2-256': Algorithm.PS256,
+    'SHA2-384': Algorithm.PS384,
+    'SHA2-512': Algorithm.PS512,
+}
 
 
 @dataclass
@@ -55,28 +65,19 @@ class OpenSslCrypto(BaseCrypto):
                     '-pkeyopt', 'ec_param_enc:named_curve'])
             case RsaKeyParams():
                 gpk.extend([
-                    '-algorithm', 'RSA',
+                    '-algorithm', (
+                        'RSA-PSS'
+                        if isinstance(params, RsaPssKeyParams) else
+                        'RSA'),
                     '-pkeyopt', f'rsa_keygen_bits:{params.bits}',
                     '-pkeyopt', f'rsa_keygen_primes:{params.primes}',
                     '-pkeyopt', f'rsa_keygen_pubexp:{params.pubexp}'])
-            case RsaPssKeyParams():
-                gpk.extend([
-                    '-algorithm', 'RSA-PSS',
-                    '-pkeyopt', f'rsa_keygen_bits:{params.bits}',
-                    '-pkeyopt', f'rsa_keygen_primes:{params.primes}',
-                    '-pkeyopt', f'rsa_keygen_pubexp:{params.pubexp}'])
-                if params.md is not None:
+                if isinstance(params, RsaPssKeyParams):
+                    h, salt = RSA_PSS_PARAMS[params.alg]
                     gpk.extend([
-                        '-pkeyopt',
-                        f'rsa_pss_keygen_md:{params.md}'])
-                if params.mgf1 is not None:
-                    gpk.extend([
-                        '-pkeyopt',
-                        f'rsa_pss_keygen_mgf1_md:{params.mgf1}'])
-                if params.saltlen is not None:
-                    gpk.extend([
-                        '-pkeyopt',
-                        f'rsa_pss_keygen_saltlen:{params.saltlen}'])
+                        '-pkeyopt', f'rsa_pss_keygen_md:{h}',
+                        '-pkeyopt', f'rsa_pss_keygen_mgf1_md:{h}',
+                        '-pkeyopt', f'rsa_pss_keygen_saltlen:{salt}'])
             case EdKeyParams():
                 gpk.extend([
                     '-algorithm', params.crv.value.upper()])
@@ -106,6 +107,7 @@ class OpenSslCrypto(BaseCrypto):
 
     @staticmethod
     def _parse_pubkey(t: str) -> BaseJsonWebPubKey:
+        print(t)
         section: str = ''
         hex_section_parts: dict[str, list[bytes]] = {}
         single_line_sections = {}
@@ -115,6 +117,10 @@ class OpenSslCrypto(BaseCrypto):
             if not line[:1].isspace():
                 section, line = line.split(':', 1)
                 single_line_sections[section] = line.strip()
+                continue
+            if section == 'PSS parameter restrictions':
+                k, v = line.strip().split(':', 1)
+                single_line_sections[f'PSS {k}'] = v.strip()
                 continue
             if section not in hex_section_parts:
                 hex_section_parts[section] = []
@@ -141,9 +147,14 @@ class OpenSslCrypto(BaseCrypto):
             and 'modulus' in hex_section_parts
             and 'publicExponent' in single_line_sections
         ):
+            alg = None
+            if 'PSS Hash Algorithm' in single_line_sections:
+                alg = RSA_PSS_HASHALG[single_line_sections[
+                    'PSS Hash Algorithm']]
             return RsaJsonWebPubKey(
                 n=b''.join(hex_section_parts['modulus']),
-                e=int(single_line_sections['publicExponent'].split(' ', 1)[0]))
+                e=int(single_line_sections['publicExponent'].split(' ', 1)[0]),
+                alg=alg)
 
         if (
             'ED25519 Private-Key' in single_line_sections

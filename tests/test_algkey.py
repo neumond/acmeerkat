@@ -27,8 +27,14 @@ from acmeerkat.core import _check_alg_key_params
         RsaKeyParams(),
         [Algorithm.RS256, Algorithm.RS384, Algorithm.RS512]),
     (
-        RsaPssKeyParams(),
-        [Algorithm.PS256, Algorithm.PS384, Algorithm.PS512]),
+        RsaPssKeyParams(alg=Algorithm.PS256),
+        [Algorithm.PS256]),
+    (
+        RsaPssKeyParams(alg=Algorithm.PS384),
+        [Algorithm.PS384]),
+    (
+        RsaPssKeyParams(alg=Algorithm.PS512),
+        [Algorithm.PS512]),
 ])
 def test_check_alg_key_params(key_params, valid_algs):
     for alg in Algorithm:
