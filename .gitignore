@@ -5,3 +5,4 @@ __pycache__/
 /*.log
 /todo.txt
 /*.py
+/dist/
