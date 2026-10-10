@@ -158,3 +158,14 @@ class UnsupportedIdentifier(AcmeError):
 @AcmeError._reg('userActionRequired')
 class UserActionRequired(AcmeError):
     "Visit the \"instance\" URL and take actions specified there"
+
+
+# non-API errors
+
+
+class ChallengeTypeMismatch(AcmeError):
+    "Can't find supported challenge type"
+
+
+class InvalidOrder(AcmeError):
+    "Order has status `invalid`"

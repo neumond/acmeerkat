@@ -1,6 +1,6 @@
 import fcntl
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, InitVar
 from enum import IntEnum
 from pathlib import Path
 from typing import BinaryIO, Self
@@ -148,11 +148,13 @@ class FilePairKVStorage(BaseKVStorage):
     This allows durable storage and mounting both files directly,
     without relying on file renaming.
     """
-    file1: Path
-    file2: Path
+    file1: InitVar[Path | str]
+    file2: InitVar[Path | str]
     compact_threshold: int = 30  # compact if 30% can be stripped
     no_compact_size: int = 65_536
 
+    _file1: Path = field(init=False)
+    _file2: Path = field(init=False)
     _data: dict[bytes, bytes] = field(init=False)
     _active: int = field(init=False)
     _version: int = field(init=False)
@@ -179,18 +181,21 @@ class FilePairKVStorage(BaseKVStorage):
     def _active_inactive_paths(self) -> tuple[Path, Path]:
         match self._active:
             case 1:
-                return self.file1, self.file2
+                return self._file1, self._file2
             case 2:
-                return self.file2, self.file1
+                return self._file2, self._file1
         raise ValueError
 
-    def __post_init__(self) -> None:
-        rf1 = JustReadFile.read(self.file1)
-        rf2 = JustReadFile.read(self.file2)
+    def __post_init__(self, file1: Path | str, file2: Path | str) -> None:
+        self._file1 = Path(file1) if isinstance(file1, str) else file1
+        self._file2 = Path(file2) if isinstance(file2, str) else file2
+
+        rf1 = JustReadFile.read(self._file1)
+        rf2 = JustReadFile.read(self._file2)
 
         match (rf1.has_some_data, rf2.has_some_data):
             case (False, False):
-                rf1 = JustReadFile.write_fresh_file(self.file1)
+                rf1 = JustReadFile.write_fresh_file(self._file1)
                 self._active = 1
             case (True, False):
                 self._active = 1

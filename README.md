@@ -18,11 +18,16 @@ You'll need `openssl` cmdline utility and installed python package:
 pip install acmeerkat
 ```
 
+Alternatively, you may simply copy `acmeerkat/` dir from this repository or create importable zip file (`./make.fish zip`). It's pure python. You may even delete unused modules in subpackages.
+
 ```py
 import os
 import signal
+import sys
 from datetime import timedelta
 from pathlib import Path
+
+sys.path.insert(0, 'acmeerkat.0.1.0.zip')
 
 from acmeerkat import ProviderAccount, KVNamespace, CertUpdater
 from acmeerkat.challenge.dnspersist01 import DnsPersist01
@@ -62,13 +67,4 @@ if reload_nginx:
     pid = int(Path('/run/nginx.pid').read_text())
     os.kill(pid, signal.SIGHUP)
     print('✅ Restarted nginx')
-```
-
-## Code quality
-
-Make sure both pass:
-
-```sh
-pytest
-mypy --strict acmeerkat/
 ```

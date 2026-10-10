@@ -1,14 +1,14 @@
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field, InitVar
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from pathlib import Path
 from random import random
 from time import sleep
 from typing import Any, ClassVar, Self
 
-from .error import AcmeError
+from .error import AcmeError, ChallengeTypeMismatch, InvalidOrder
 from .utils import b64_jose, bin_json_dumps, jws_serialize, is_valid_domain
 from . import abc, error, jwk, pem, types as t
 
@@ -314,6 +314,10 @@ class ProviderAccount:
             'url': url})
 
     def _update_account(self, a: dict[Any, Any]) -> t.AccountDict:
+        if '__Location' not in a:
+            # account updates do not return Location header
+            # filling here old value to pass validation
+            a['__Location'] = self.account['__Location']
         if not t.is_valid_account_dict(a):
             raise ValueError(f'Invalid account: {a!r}')
         self.account = a
@@ -405,7 +409,8 @@ class ProviderAccount:
 
         try:
             resp = self._do_signed_request(
-                self.directory['keyChange'], inner)
+                self.directory['keyChange'],
+                inner)
         except (
             error.BadSignatureAlgorithm,  # algorithm not supported
             error.BadPublicKey,  # bad parameters, e.g. low RSA bits
@@ -418,8 +423,9 @@ class ProviderAccount:
         return self._update_account(resp)
 
     def deactivate(self, drop_key: bool = True) -> t.AccountDict:
-        resp = self._do_signed_request(self.account['__Location'], {
-            'status': 'deactivated'})
+        resp = self._do_signed_request(
+            self.account['__Location'],
+            {'status': 'deactivated'})
         if drop_key:
             self.storage_ns.update({
                 b'alg': b'',
@@ -428,14 +434,16 @@ class ProviderAccount:
 
     def update_contacts(self) -> t.AccountDict:
         # NOTE: does nothing on LE
-        resp = self._do_signed_request(self.account['__Location'], {
-            'contact': self.contacts})
+        resp = self._do_signed_request(
+            self.account['__Location'],
+            {'contact': self.contacts})
         return self._update_account(resp)
 
     def update_tos_agreement(self, agreed: bool = True) -> t.AccountDict:
         # NOTE: does nothing on LE, even with agreed=False
-        resp = self._do_signed_request(self.account['__Location'], {
-            'termsOfServiceAgreed': agreed})
+        resp = self._do_signed_request(
+            self.account['__Location'],
+            {'termsOfServiceAgreed': agreed})
         return self._update_account(resp)
 
     def dns_persist_01_record(
@@ -497,8 +505,11 @@ class CertUpdater:
                 if c['status'] != 'pending':
                     continue
                 return performer, c
-        # TODO: provide more info on available challenge types
-        raise Exception('Failed to find suitable challenge performer')
+        have = [p.TYPE for p in self.challenges]
+        got = [c['type'] for c in clist]
+        raise ChallengeTypeMismatch(
+            'Failed to find suitable challenge performer: '
+            f'have={have!r} got={got!r}')
 
     def _perform_authorization(self, url: str) -> None:
         resp = self.account._do_signed_request(url, '')
@@ -510,7 +521,13 @@ class CertUpdater:
                 f'Authorization must be in status pending, got {st}')
         # TODO: check resp['expires']
 
-        performer, cconf = self._find_chal_performer(resp['challenges'])
+        try:
+            performer, cconf = self._find_chal_performer(resp['challenges'])
+        except ChallengeTypeMismatch as e:
+            self.account._do_signed_request(url, {
+                'status': 'deactivated'})
+            raise e
+
         churl = cconf['url']
 
         with performer._perform(
@@ -557,6 +574,22 @@ class CertUpdater:
             self._CURRENT_ORDER_PREFIX + b'keypair': b'',
             self._CURRENT_ORDER_PREFIX + b'cert_chain': b''})
 
+    def cancel_current_order(self) -> None:
+        storage = self.storage_ns.descend(self._CURRENT_ORDER_PREFIX)
+        order_url = storage.get(b'url').decode('utf-8')
+        if order_url:
+            order = self.account._do_signed_request(
+                order_url, '', ('Retry-After', ))
+            if order['status'] == 'pending':
+                for url in order['authorizations']:
+                    self.account._do_signed_request(url, {
+                        'status': 'deactivated'})
+        storage.update({
+            b'url': b'',
+            b'alg': b'',
+            b'keypair': b'',
+            b'cert_chain': b''})
+
     def issue_new_certificate(self) -> None:
         storage = self.storage_ns.descend(self._CURRENT_ORDER_PREFIX)
 
@@ -584,8 +617,16 @@ class CertUpdater:
         if order['status'] == 'pending':
             # all authorizations must complete
             # they cover 1-by-1 each domain
-            for a in order['authorizations']:
-                self._perform_authorization(a)
+            try:
+                for a in order['authorizations']:
+                    self._perform_authorization(a)
+            except AcmeError as e:
+                storage.update({
+                    b'url': b'',
+                    b'alg': b'',
+                    b'keypair': b'',
+                    b'cert_chain': b''})
+                raise e
             # all done, wait order status
             while True:
                 order = self.account._do_signed_request(
@@ -610,7 +651,12 @@ class CertUpdater:
                 order_url, '', ('Retry-After', ))
 
         if order['status'] != 'valid':
-            raise Exception(f'Bad order status: {order["status"]}')
+            storage.update({
+                b'url': b'',
+                b'alg': b'',
+                b'keypair': b'',
+                b'cert_chain': b''})
+            raise InvalidOrder(f'Bad order status: {order["status"]}')
 
         pem_chain = self.account._download_certificate_request(
             order['certificate'])
@@ -630,9 +676,18 @@ class CertUpdater:
         except IndexError:
             return timedelta(0)
         cinfo = pem.parse_bundle_cert_info(bundle)
-        return cinfo.not_after - (datetime.now() if now is None else now)
+        return cinfo.not_after - (
+            datetime.now(timezone.utc)
+            if now is None else now)
 
-    def write_nginx_files(self, cert_chain: Path, private_key: Path) -> None:
+    def write_nginx_files(
+        self, cert_chain: Path | str,
+        private_key: Path | str,
+    ) -> None:
+        if isinstance(cert_chain, str):
+            cert_chain = Path(cert_chain)
+        if isinstance(private_key, str):
+            private_key = Path(private_key)
         cert = []
         pk = b''
         for part in pem.split_pem_bundle(self.get_current_bundle()):
@@ -645,5 +700,7 @@ class CertUpdater:
         cert_chain.write_bytes(b'\n\n'.join(cert))
         private_key.write_bytes(pk)
 
-    def write_haproxy_file(self, path: Path) -> None:
+    def write_haproxy_file(self, path: Path | str) -> None:
+        if isinstance(path, str):
+            path = Path(path)
         path.write_bytes(self.get_current_bundle())
