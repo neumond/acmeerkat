@@ -63,3 +63,57 @@ def test_storage(tempdir, transactions, max_tx_acts):
     assert s2._data == expected
     for k, v in expected.items():
         s2.get(k) == v
+
+
+def test_broken_transaction(tempdir):
+    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+    assert s._active == 1
+    s.update({b'valid': b'1', b'validB': b'1B'})
+    assert s._active == 1
+    s.update({b'broken': b'2', b'brokenB': b'2B'})
+    assert s._active == 1
+    del s
+
+    with (tempdir / '1.bin').open('rb+') as f:
+        content = f.read(1000)
+        f.seek(len(content) - 5)
+        f.truncate()
+
+    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+    assert s.get(b'valid') == b'1'
+    assert s.get(b'validB') == b'1B'
+    assert s.get(b'broken') == b''  # not exists
+    assert s.get(b'brokenB') == b''
+    s.update({b'another': b'3', b'anotherB': b'3B'})
+    del s
+
+    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+    assert s.get(b'valid') == b'1'
+    assert s.get(b'validB') == b'1B'
+    assert s.get(b'broken') == b''  # not exists
+    assert s.get(b'brokenB') == b''
+    assert s.get(b'another') == b'3'
+    assert s.get(b'anotherB') == b'3B'
+    # broken file tail didn't break incoming new transactions
+
+
+def test_broken_compaction(tempdir):
+    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+    assert s._active == 1
+    s.update({b'a': b'1', b'b': b'2', b'c': b'3'})
+    assert s._active == 1
+    s.compact(clean_2nd_file=False)
+    assert s._active == 2
+    del s
+
+    with (tempdir / '2.bin').open('rb+') as f:
+        content = f.read(1000)
+        f.seek(len(content) - 7)
+        f.truncate()
+
+    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+    # rollback to file 1
+    assert s._active == 1
+    assert s.get(b'a') == b'1'
+    assert s.get(b'b') == b'2'
+    assert s.get(b'c') == b'3'
