@@ -1,7 +1,20 @@
 import base64
 import json
 import re
+from collections import abc
+from random import random
+from time import sleep
 from typing import Any
+
+
+__all__ = (
+    'b64_jose',
+    'bin_json_dumps',
+    'is_valid_domain',
+    'jws_serialize',
+    'periodic',
+    'uint_to_bytes',
+)
 
 
 COMPACT_JSON_SEP = (',', ':')
@@ -40,6 +53,7 @@ _LABEL_RPART = (
 _DOMAIN_RE = re.compile(
     r'^'
     r'(?=.{1,253}$)'  # Total length ≤ 253
+    r'(?:\*\.)?'  # optional wildcard
     rf'(?:{_LABEL_RPART}\.)+'
     rf'({_LABEL_RPART})'  # TLD
     r'$')
@@ -47,3 +61,13 @@ _DOMAIN_RE = re.compile(
 
 def is_valid_domain(d: str) -> bool:
     return _DOMAIN_RE.match(d) is not None
+
+
+def periodic(
+    period: float,
+    jitter: float = 0.,
+) -> abc.Iterator[None]:
+    half_jitter = jitter * 0.5
+    while True:
+        yield
+        sleep(period + random() * jitter - half_jitter)

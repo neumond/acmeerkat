@@ -30,6 +30,18 @@ from acmeerkat.utils import is_valid_domain
     ('0.1.2.3.4.5.6.7.com', True),
     pytest.param(('sub.' * 10) + 'domain.com', True, id='longer'),
     pytest.param(('sub.' * 100) + 'domain.com', False, id='too_long'),
+    ('*.example.org', True),  # allow wildcards
+    ('*.sub.example.org', True),
+    ('*.*.example.org', False),
+    ('**.example.org', False),
+    ('*', False),
+    ('*.*', False),
+    ('**.example.org', False),
+    ('sub.*.example.org', False),
+    ('münchen.de', False),  # require punycode
+    ('бүргэд.мон', False),
+    (' example.org', False),
+    ('example.org ', False),
 ])
 def test_is_valid_domain(domain, valid):
     assert is_valid_domain(domain) == valid

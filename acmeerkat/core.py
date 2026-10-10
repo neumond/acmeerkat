@@ -1,15 +1,16 @@
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field, InitVar
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import cached_property
+from pathlib import Path
 from random import random
 from time import sleep
 from typing import Any, ClassVar, Self
 
 from .error import AcmeError
 from .utils import b64_jose, bin_json_dumps, jws_serialize, is_valid_domain
-from . import abc, error, jwk, types as t
+from . import abc, error, jwk, pem, types as t
 
 
 __all__ = (
@@ -476,6 +477,9 @@ class CertUpdater:
     key_params: jwk.BaseKeyParams = field(
         default_factory=lambda: jwk.EcKeyParams(crv=jwk.EcType.P_256))
 
+    _CURRENT_ORDER_PREFIX: ClassVar[bytes] = b'current_order/'
+    _LATEST_KEY: ClassVar[bytes] = b'latest'
+
     def __post_init__(self) -> None:
         _check_alg_key_params(self.alg, self.key_params)
         for d in self.domains:
@@ -526,11 +530,35 @@ class CertUpdater:
                     case _:
                         raise Exception(f'Invalid challenge: {resp}')
 
-    def issue_new_certificate(
-        self,
-        current_order_prefix: bytes = b'current_order/',
-    ) -> None:
-        storage = self.storage_ns.descend(current_order_prefix)
+    def _store_new_bundle(self) -> None:
+        """
+        Linked list structure with invalid tail pointer
+        Every certificate+keypair is a single binary
+        with little header.
+
+        latest: 315
+        315: prev=310 alg=ES256 -----BEGIN CERTIFICATE...
+        310: prev=294 alg=RS512 -----BEGIN CERTIFICATE...
+        294: prev=255 alg=RS512 -----BEGIN CERTIFICATE...
+        # 255 doesn't exist
+        """
+        order = self.storage_ns.descend(self._CURRENT_ORDER_PREFIX)
+        latest = self.storage_ns.get(self._LATEST_KEY) or b'0'
+        bundle = pem.pack_bundle(
+            pem_chain=order.get(b'cert_chain'),
+            private_key=order.get(b'keypair'),
+            header=b'prev=' + latest + b' alg=' + order.get(b'alg'))
+        version = str(int(latest) + 1).encode('ascii')
+        self.storage_ns.update({
+            version: bundle,
+            b'latest': version,
+            self._CURRENT_ORDER_PREFIX + b'url': b'',
+            self._CURRENT_ORDER_PREFIX + b'alg': b'',
+            self._CURRENT_ORDER_PREFIX + b'keypair': b'',
+            self._CURRENT_ORDER_PREFIX + b'cert_chain': b''})
+
+    def issue_new_certificate(self) -> None:
+        storage = self.storage_ns.descend(self._CURRENT_ORDER_PREFIX)
 
         # TODO: automatically remove order on error
         # TODO: automatically remove order on domain mismatch
@@ -586,6 +614,36 @@ class CertUpdater:
 
         pem_chain = self.account._download_certificate_request(
             order['certificate'])
-        # storage.update({b'cert_chain': pem_chain})
+        storage.update({b'cert_chain': pem_chain})
+        self._store_new_bundle()
 
-        print(pem_chain.decode('ascii'))
+    def get_current_bundle(self) -> bytes:
+        latest = self.storage_ns.get(self._LATEST_KEY)
+        if not latest:
+            raise IndexError('No certificate bundle found')
+        bundle = self.storage_ns.get(latest)
+        return bundle[bundle.find(b'-----'):]
+
+    def get_remaining_validity(self, now: datetime | None = None) -> timedelta:
+        try:
+            bundle = self.get_current_bundle()
+        except IndexError:
+            return timedelta(0)
+        cinfo = pem.parse_bundle_cert_info(bundle)
+        return cinfo.not_after - (datetime.now() if now is None else now)
+
+    def write_nginx_files(self, cert_chain: Path, private_key: Path) -> None:
+        cert = []
+        pk = b''
+        for part in pem.split_pem_bundle(self.get_current_bundle()):
+            ptype, _ = pem.pem_object_split(part)
+            match ptype:
+                case b'CERTIFICATE':
+                    cert.append(part)
+                case b'PRIVATE KEY':
+                    pk = part
+        cert_chain.write_bytes(b'\n\n'.join(cert))
+        private_key.write_bytes(pk)
+
+    def write_haproxy_file(self, path: Path) -> None:
+        path.write_bytes(self.get_current_bundle())

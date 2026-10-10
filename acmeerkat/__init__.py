@@ -24,6 +24,7 @@ from .jwk import (
     RsaKeyParams,
     RsaPssKeyParams,
 )
+from .utils import periodic
 from .types import (
     AccountDict,
     AccountStatus,
@@ -63,6 +64,8 @@ __all__ = (
     'RsaJsonWebPubKey',
     'RsaKeyParams',
     'RsaPssKeyParams',
+    # utils
+    'periodic',
     # types
     'AccountDict',
     'AccountStatus',

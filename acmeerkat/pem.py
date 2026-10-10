@@ -1,11 +1,15 @@
 import urllib.parse
 from collections import abc
 
+from . import x509
+
 
 __all__ = (
-    'split_pem_bundle',
-    'pem_object_split',
     'cert_chain_to_firefox_link',
+    'pack_bundle',
+    'parse_bundle_cert_info',
+    'pem_object_split',
+    'split_pem_bundle',
 )
 
 
@@ -51,3 +55,33 @@ def cert_chain_to_firefox_link(pem_bundle: bytes) -> str:
         certs.append('cert=' + urllib.parse.quote_from_bytes(
             content.replace(b'\n', b'').replace(b' ', b''), safe=''))
     return 'about:certificate?' + '&'.join(certs)
+
+
+def pack_bundle(
+    pem_chain: bytes,
+    private_key: bytes,
+    header: bytes = b'',
+) -> bytes:
+    items = []
+    if header:
+        items.append(header)
+    items.extend(split_pem_bundle(pem_chain))
+    items.append(private_key)
+    return b'\n\n'.join(items)
+
+
+def parse_bundle_cert_info(pem_bundle: bytes) -> x509.CertInfo:
+    r = None
+    for part in split_pem_bundle(pem_bundle):
+        ptype, pcont = pem_object_split(part)
+        if ptype != b'CERTIFICATE':
+            continue
+        cinfo = x509.parse_cert(pcont)
+        if not cinfo.is_leaf:
+            continue
+        if r is not None:
+            raise ValueError('At most one certificate allowed in bundle')
+        r = cinfo
+    if r is None:
+        raise ValueError('No leaf certificate found in bundle')
+    return r
