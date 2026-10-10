@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from acmeerkat.storage.file_pair import FilePairKVStorage
+from acmeerkat.storage.file_pair import FilePairKVStorage, BadMagicError
 
 
 @pytest.mark.parametrize('a,b,r', [
@@ -31,6 +31,11 @@ def tempdir():
         yield Path(d)
 
 
+@pytest.fixture
+def file_pair(tempdir):
+    return tempdir / '1.bin', tempdir / '2.bin'
+
+
 @pytest.mark.parametrize('transactions,max_tx_acts', [
     (0, 5),
     (1, 1),
@@ -39,8 +44,8 @@ def tempdir():
     (100, 8),
     (1000, 8),
 ])
-def test_storage(tempdir, transactions, max_tx_acts):
-    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+def test_storage(file_pair, transactions, max_tx_acts):
+    s = FilePairKVStorage(*file_pair)
     expected = {}
     for _ in range(transactions):
         for _ in range(random.randint(1, max_tx_acts)):
@@ -59,14 +64,14 @@ def test_storage(tempdir, transactions, max_tx_acts):
         s.get(k) == v
     assert s.get(b'notexist') == b''
 
-    s2 = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+    s2 = FilePairKVStorage(*file_pair)
     assert s2._data == expected
     for k, v in expected.items():
         s2.get(k) == v
 
 
-def test_broken_transaction(tempdir):
-    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+def test_broken_transaction(file_pair):
+    s = FilePairKVStorage(*file_pair)
     assert s._active == 1
     s.update({b'valid': b'1', b'validB': b'1B'})
     assert s._active == 1
@@ -74,12 +79,12 @@ def test_broken_transaction(tempdir):
     assert s._active == 1
     del s
 
-    with (tempdir / '1.bin').open('rb+') as f:
+    with file_pair[0].open('rb+') as f:
         content = f.read(1000)
         f.seek(len(content) - 5)
         f.truncate()
 
-    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+    s = FilePairKVStorage(*file_pair)
     assert s.get(b'valid') == b'1'
     assert s.get(b'validB') == b'1B'
     assert s.get(b'broken') == b''  # not exists
@@ -87,7 +92,7 @@ def test_broken_transaction(tempdir):
     s.update({b'another': b'3', b'anotherB': b'3B'})
     del s
 
-    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+    s = FilePairKVStorage(*file_pair)
     assert s.get(b'valid') == b'1'
     assert s.get(b'validB') == b'1B'
     assert s.get(b'broken') == b''  # not exists
@@ -97,8 +102,8 @@ def test_broken_transaction(tempdir):
     # broken file tail didn't break incoming new transactions
 
 
-def test_broken_compaction(tempdir):
-    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+def test_broken_compaction(file_pair):
+    s = FilePairKVStorage(*file_pair)
     assert s._active == 1
     s.update({b'a': b'1', b'b': b'2', b'c': b'3'})
     assert s._active == 1
@@ -106,14 +111,25 @@ def test_broken_compaction(tempdir):
     assert s._active == 2
     del s
 
-    with (tempdir / '2.bin').open('rb+') as f:
+    with file_pair[1].open('rb+') as f:
         content = f.read(1000)
         f.seek(len(content) - 7)
         f.truncate()
 
-    s = FilePairKVStorage(tempdir / '1.bin', tempdir / '2.bin')
+    s = FilePairKVStorage(*file_pair)
     # rollback to file 1
     assert s._active == 1
     assert s.get(b'a') == b'1'
     assert s.get(b'b') == b'2'
     assert s.get(b'c') == b'3'
+
+
+def test_no_unknown_file_overwrite(file_pair):
+    # NOTE: very small files (<12b) get overwritten
+    content = b'some text file here'
+    file_pair[0].write_bytes(content)
+
+    with pytest.raises(BadMagicError):
+        FilePairKVStorage(*file_pair)
+
+    assert file_pair[0].read_bytes() == content

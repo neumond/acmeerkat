@@ -8,7 +8,7 @@ from typing import BinaryIO, Self
 from acmeerkat import BaseKVStorage
 
 
-__all__ = ('FilePairKVStorage', )
+__all__ = ('FilePairKVStorage', 'BadMagicError')
 
 
 # TODO: breaks when used in different processes at the same time
@@ -22,6 +22,17 @@ class RecordTag(IntEnum):
 
 class EndOfFile(Exception):
     "valid end of file"
+
+
+class IncompleteReadError(Exception):
+    pass
+
+
+class BadMagicError(Exception):
+    pass
+
+
+_MAGIC_BYTES = b'ACMEERKAT001'
 
 
 @dataclass
@@ -45,7 +56,7 @@ class JustReadFile:
             if len(b := f.read(ln)) != ln:
                 if len(b) == 0 and eof_on_zero:
                     raise EndOfFile
-                raise ValueError
+                raise IncompleteReadError
             self.total_size += ln
             return b
 
@@ -53,9 +64,13 @@ class JustReadFile:
             return int.from_bytes(read_exactly(4, eof_on_zero))
 
         try:
-            self.version = read_int32(eof_on_zero=True)
+            magic = read_exactly(12, eof_on_zero=True)
         except EndOfFile:
             raise FileNotFoundError  # same as empty file
+        if magic != _MAGIC_BYTES:
+            raise BadMagicError
+
+        self.version = read_int32()
 
         transaction: dict[bytes, bytes] = {}
 
@@ -103,7 +118,7 @@ class JustReadFile:
             self.broken_tail = False
         except EndOfFile:
             self.broken_tail = False
-        except ValueError:
+        except IncompleteReadError:
             pass
         return self
 
@@ -115,6 +130,7 @@ class JustReadFile:
         self.broken_tail = False
         self.version = 1
         with p.open('wb') as f:
+            f.write(_MAGIC_BYTES)
             f.write(self.version.to_bytes(4))
             # empty commit distinguishes from broken compaction
             f.write(RecordTag.commit.to_bytes(4))
@@ -199,6 +215,7 @@ class FilePairKVStorage(BaseKVStorage):
         act_path, inact_path = self._active_inactive_paths()
         with act_path.open('wb') as f:
             fcntl.lockf(f, fcntl.LOCK_EX)
+            f.write(_MAGIC_BYTES)
             f.write(self._version.to_bytes(4))
             for k, v in self._data.items():
                 f.write(RecordTag.pair.to_bytes(4))
