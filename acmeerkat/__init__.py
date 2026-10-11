@@ -3,7 +3,6 @@ from .abc import (
     BaseCrypto,
     BaseHttpsClient,
     BaseKVStorage,
-    BaseTokenChallenge,
 )
 from .core import (
     CertUpdater,
@@ -24,7 +23,10 @@ from .jwk import (
     RsaKeyParams,
     RsaPssKeyParams,
 )
-from .utils import periodic
+from .utils import (
+    b64_jose,
+    periodic,
+)
 from .types import (
     AccountDict,
     AccountStatus,
@@ -45,7 +47,6 @@ __all__ = (
     'BaseCrypto',
     'BaseHttpsClient',
     'BaseKVStorage',
-    'BaseTokenChallenge',
     # core
     'CertUpdater',
     'KVNamespace',
@@ -65,6 +66,7 @@ __all__ = (
     'RsaKeyParams',
     'RsaPssKeyParams',
     # utils
+    'b64_jose',
     'periodic',
     # types
     'AccountDict',

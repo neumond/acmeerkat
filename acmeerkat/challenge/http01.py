@@ -1,8 +1,10 @@
+from collections import abc
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-from acmeerkat import BaseTokenChallenge
+from acmeerkat import AuthzIdentifier, BaseChallenge, ChallengeConfig
 
 
 __all__ = (
@@ -13,8 +15,28 @@ __all__ = (
 )
 
 
-class BaseHttp01(BaseTokenChallenge):
+class BaseHttp01(BaseChallenge):
     TYPE: ClassVar[str] = 'http-01'
+
+    def chal_set(self, name: str, content: str) -> None:
+        raise NotImplementedError
+
+    def chal_remove(self, name: str) -> None:
+        raise NotImplementedError
+
+    @contextmanager
+    def _perform(
+        self,
+        identifier: AuthzIdentifier,
+        config: ChallengeConfig,
+        thumbprint: str,
+    ) -> abc.Iterator[None]:
+        token = config['token']
+        try:
+            self.chal_set(token, f'{token}.{thumbprint}')
+            yield
+        finally:
+            self.chal_remove(token)
 
 
 class ManualHttp01(BaseHttp01):

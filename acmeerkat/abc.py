@@ -12,7 +12,6 @@ __all__ = (
     'BaseCrypto',
     'BaseHttpsClient',
     'BaseKVStorage',
-    'BaseTokenChallenge',
 )
 
 
@@ -32,7 +31,7 @@ class BaseKVStorage:
 class BaseHttpsClient:
     def request(
         self,
-        method: Literal['GET', 'POST', 'HEAD'],
+        method: Literal['GET', 'POST', 'HEAD', 'DELETE'],
         url: str,
         send_body: bytes | None,
         send_headers: dict[str, str],
@@ -81,25 +80,3 @@ class BaseChallenge:
         thumbprint: str,
     ) -> contextlib.AbstractContextManager[None]:
         raise NotImplementedError
-
-
-class BaseTokenChallenge(BaseChallenge):
-    def chal_set(self, name: str, content: str) -> None:
-        raise NotImplementedError
-
-    def chal_remove(self, name: str) -> None:
-        raise NotImplementedError
-
-    @contextlib.contextmanager
-    def _perform(
-        self,
-        identifier: AuthzIdentifier,
-        config: ChallengeConfig,
-        thumbprint: str,
-    ) -> abc.Iterator[None]:
-        token = config['token']
-        try:
-            self.chal_set(token, f'{token}.{thumbprint}')
-            yield
-        finally:
-            self.chal_remove(token)

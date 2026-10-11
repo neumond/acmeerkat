@@ -528,16 +528,19 @@ class CertUpdater:
                 'status': 'deactivated'})
             raise e
 
-        churl = cconf['url']
-
         with performer._perform(
             resp['identifier'],
             cconf,
             self.account._thumbprint,
         ):
+            # initiate challenge
+            resp = self.account._do_signed_request(
+                cconf['url'], {}, ('Retry-After', ))
+            sleep(_retry_delay(resp))
+            # polling loop
             while True:
                 resp = self.account._do_signed_request(
-                    churl, {}, ('Retry-After', ))
+                    url, '', ('Retry-After', ))
                 match resp['status']:
                     case 'pending' | 'processing':
                         sleep(_retry_delay(resp))
@@ -545,7 +548,7 @@ class CertUpdater:
                     case 'valid':
                         return
                     case _:
-                        raise Exception(f'Invalid challenge: {resp}')
+                        raise Exception(f'Invalid authz state: {resp}')
 
     def _store_new_bundle(self) -> None:
         """

@@ -17,7 +17,7 @@ class UrllibHttpsClient(BaseHttpsClient):
 
     def request(
         self,
-        method: Literal['GET', 'POST', 'HEAD'],
+        method: Literal['GET', 'POST', 'HEAD', 'DELETE'],
         url: str,
         send_body: bytes | None,
         send_headers: dict[str, str],
