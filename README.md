@@ -1,24 +1,34 @@
-# ACMEerkat: the ACME client
+# ACMEerkat: the ACMEv2 client library
 
-## Why another ACME client?
+## Another ACME client?
 
-I want to build a fully customizable and programmable client with a clean API, rather than yet another ordinary CLI utility that optimizes a single happy path for delivering a certificate. Everything must be replaceable, including even the HTTP client. The core must be easy to audit and must consist only of simple, readable, structured code, rather than a thousand lines of compressed cryptographic magic.
+Many good clients already exist, yet they all strive to encapsulate the complexity of the ACME protocol within a single CLI utility so that users need think about as few aspects as possible. While this is a meritorious goal in its own right, it makes such tools notoriously difficult to adapt to more convoluted scenarios.
 
-It would not be written in Bash. Bash is hard to read and hard to write. The task is complex enough that using Python yields substantial benefits, yet it is not demanding enough to require compiled languages. While Bash is ubiquitous and installing a single-file script is a no-brainer, making it work correctly is hard. You always have to experiment to figure out things like the resulting file layout, and you cannot simply import the script and use its API to do the precise thing you need; it is always a complex command-line utility.
+Consider, for example, a Kubernetes environment: you probably want to install a certificate as a Secret object (since it contains the certificate's private key), yet you will have to store ACME account data and certificate history (a few hundred kilobytes) in an entire volume, which introduces operational complexity. All of that could instead be stored in just another Secret object, directly on the Kubernetes control plane.
 
-Storing all the data as regular files does not fit every setup. On Kubernetes, it could be better to avoid using volumes and instead store certificates and related data in native objects such as ConfigMaps and Secrets. Wildcard certificates could be shared with several remote machines. You may want to use different Let's Encrypt accounts for different certificates. The ways to install and apply a new certificate vary greatly depending on the environment (e.g., containers) and the HTTP server used, especially if you want to increase safety by dropping as many privileges as possible.
+What if you want to replace not only the storage but also the HTTP client or the crypto engine? Most tools offer no tangible means of doing so. What if you want to control ACME accounts themselves — rolling over account keys, changing their crypto algorithms, or issuing specific certificates with specific accounts? Most likely, there is no easy way to do any of this.
 
-No hooks, no plugins — just plain old OOP and DI. Automate precisely what you want, and even if you don't know the details of the ACME protocol, the API will give you an intuitive feel for it.
+## Auditability
+
+Most of the _tiny_ clients try to pack all their code into a single file of roughly 1000 lines so that you can read it yourself. ACMEerkat does not do this. Instead, it adopts a meaningful package structure, attempting to isolate trivial boilerplate — such as lists of errors — into a separate module. As a result, you need only read the core thoughtfully; it is even less than 1000 lines and contains no heavy cryptography, since that is decoupled into BaseCrypto subclasses with a clean API.
+
+All ABC implementations in the subpackages are completely replaceable. In fact, you may even delete the modules you will not use and bring your own. They will never be implicitly imported.
+
+## Easy to install
+
+Simply zip the acmeerkat directory and put that single file on your server (see what `cmd__zip` in [make.fish](make.fish) does). It's as simple as downloading that other single-file client. Only python3 is required to run it; it doesn't even need pip.
+
+If you do want to use pip, it's trivial: `pip install acmeerkat`.
+
+While some people prefer bash for its ubiquity, I see no real benefit in using it for ACME. The task requires some parsing and encoding (especially json), and bash without a host of supplementary utilities is quite alien to this. It would be difficult to use as a library, bash is a bad programming language. Moreover, most server operating systems have Python pre-installed anyway.
+
+## Dependency injection instead hooks and plugins
+
+The project strives to make everything as clear as possible. A first glance at the types must be enough to know how to use anything. Even more, looking at the ACMEerkat API is the easiest way to learn the general structure and capabilities of the ACME protocol.
 
 ## How to use
 
-You'll need `openssl` cmdline utility and installed python package:
-
-```sh
-pip install acmeerkat
-```
-
-Alternatively, you may simply copy `acmeerkat/` dir from this repository or create importable zip file (`./make.fish zip`). It's pure python. You may even delete unused modules in subpackages.
+You'll need `openssl` cmdline utility and acmeerkat downloaded as zip archive.
 
 ```py
 import os
