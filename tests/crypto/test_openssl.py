@@ -1,8 +1,7 @@
 import pytest
 
-from acmeerkat import Algorithm, jwk
-from acmeerkat.core import _check_alg_key_params
 from acmeerkat.crypto.openssl import OpenSslCrypto
+from acmeerkat import alg_params as ap
 
 
 @pytest.mark.parametrize('pktext,jsonv', [
@@ -155,7 +154,6 @@ PSS parameter restrictions:
             'CO6j4vw3U9Jf_zvueond2xArnndoXXW6vAdBz2hqWBXLVBapeZR6hh2bP94UhJilZ'
             'MhgQH-dveMd3znqaG8ekLQkVn8HXa1ijDHAuXJ_xX3eckPO7QxlGxtimhZJmU0e3u'
             'l5dbgt4DgiR3de1HAk'),
-        'alg': 'PS256',
     }, id='non-hex_pss_params'),
 ])
 def test_parse_pubkey(pktext, jsonv):
@@ -168,41 +166,34 @@ def _fit_bits(n: int, step: int) -> int:
     return n - mod + step
 
 
-@pytest.mark.parametrize('params,alg,sigsize', [
-    (jwk.EcKeyParams(jwk.EcType.P_256), Algorithm.ES256, 256 * 2),
-    (jwk.EcKeyParams(jwk.EcType.P_384), Algorithm.ES384, 384 * 2),
-    (
-        jwk.EcKeyParams(jwk.EcType.P_521),
-        Algorithm.ES512, _fit_bits(521, 8) * 2),
+@pytest.mark.parametrize('alg_params,jws_alg,sigsize', [
+    (ap.Ec256(), 'ES256', 256 * 2),
+    (ap.Ec384(), 'ES384', 384 * 2),
+    (ap.Ec512(), 'ES512', _fit_bits(521, 8) * 2),
 
-    (jwk.RsaKeyParams(bits=1024), Algorithm.RS256, 1024),
-    (jwk.RsaKeyParams(bits=2048), Algorithm.RS256, 2048),
-    (jwk.RsaKeyParams(bits=4096), Algorithm.RS256, 4096),
+    (ap.Rsa256(bits=1024), 'RS256', 1024),
+    (ap.Rsa256(bits=2048), 'RS256', 2048),
+    (ap.Rsa256(bits=4096), 'RS256', 4096),
 
-    (jwk.RsaKeyParams(bits=2048), Algorithm.RS512, 2048),
+    (ap.Rsa512(bits=2048), 'RS512', 2048),
 
-    (
-        jwk.RsaPssKeyParams(bits=2048, alg=Algorithm.PS256),
-        Algorithm.PS256, 2048),
-    (
-        jwk.RsaPssKeyParams(bits=2048, alg=Algorithm.PS384),
-        Algorithm.PS384, 2048),
-    (
-        jwk.RsaPssKeyParams(bits=2048, alg=Algorithm.PS512),
-        Algorithm.PS512, 2048),
+    (ap.RsaPss256(bits=2048), 'PS256', 2048),
+    (ap.RsaPss384(bits=2048), 'PS384', 2048),
+    (ap.RsaPss512(bits=2048), 'PS512', 2048),
+    (ap.RsaPss512(bits=4096), 'PS512', 4096),
 
-    (jwk.EdKeyParams(jwk.EdVariant.Ed25519), Algorithm.EdDSA, 512),
-    (jwk.EdKeyParams(jwk.EdVariant.Ed448), Algorithm.EdDSA, 912),
+    (ap.Ed25519(), 'EdDSA', 512),
+    (ap.Ed448(), 'EdDSA', 912),
 ])
-def test_gen_check_sign(params, alg, sigsize):
-    _check_alg_key_params(alg, params)
+def test_gen_check_sign(alg_params, jws_alg, sigsize):
+    assert alg_params.get_jws_alg() == jws_alg
     c = OpenSslCrypto(debug=False)
-    kp = c.generate_key_pair(params)
+    kp = c.generate_key_pair(alg_params)
     assert len(kp) > 0
     assert c.check_key_pair(kp) is True
-    sgn = c.sign(alg, kp, b'hello world')
+    sgn = c.sign(alg_params, kp, b'hello world')
     assert len(sgn) * 8 == sigsize
-    csr = c.generate_csr(alg, kp, ['example.org'])
+    csr = c.generate_csr(alg_params, kp, ['example.org'])
     assert len(csr) > 0
 
 
@@ -213,12 +204,13 @@ def test_check_empty_bytes():
 
 def test_rsa_signature_hashes():
     c = OpenSslCrypto()
-    kp = c.generate_key_pair(jwk.RsaKeyParams())
+    # NOTE: hacky, same RSA key may be used with different hashes
+    kp = c.generate_key_pair(ap.Rsa256())
     text = b'hello world'
-    sgn_256 = c.sign(Algorithm.RS256, kp, text)
-    sgn_256_2 = c.sign(Algorithm.RS256, kp, text)
-    sgn_512 = c.sign(Algorithm.RS512, kp, text)
-    sgn_512_2 = c.sign(Algorithm.RS512, kp, text)
+    sgn_256 = c.sign(ap.Rsa256(), kp, text)
+    sgn_256_2 = c.sign(ap.Rsa256(), kp, text)
+    sgn_512 = c.sign(ap.Rsa512(), kp, text)
+    sgn_512_2 = c.sign(ap.Rsa512(), kp, text)
     assert sgn_256 != sgn_512
     assert sgn_256 == sgn_256_2
     assert sgn_512 == sgn_512_2
@@ -226,12 +218,13 @@ def test_rsa_signature_hashes():
 
 def test_rsa_modes():
     c = OpenSslCrypto()
-    kp = c.generate_key_pair(jwk.RsaKeyParams())
+    # NOTE: hacky, same RSA key may be used for PSS
+    kp = c.generate_key_pair(ap.Rsa256())
     text = b'hello world'
-    sgn_reg = c.sign(Algorithm.RS256, kp, text)
-    sgn_reg2 = c.sign(Algorithm.RS256, kp, text)
-    sgn_pss = c.sign(Algorithm.PS256, kp, text)
-    sgn_pss2 = c.sign(Algorithm.PS256, kp, text)
+    sgn_reg = c.sign(ap.Rsa256(), kp, text)
+    sgn_reg2 = c.sign(ap.Rsa256(), kp, text)
+    sgn_pss = c.sign(ap.RsaPss256(), kp, text)
+    sgn_pss2 = c.sign(ap.RsaPss256(), kp, text)
     assert sgn_reg != sgn_pss
     assert sgn_reg == sgn_reg2
     # NOTE: PSS is not repeatable

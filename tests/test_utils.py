@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
-from acmeerkat.utils import is_valid_domain
+from acmeerkat.utils import is_valid_domain, bin_isoformat, bin_fromisoformat
 
 
 @pytest.mark.parametrize('domain,valid', [
@@ -45,3 +47,22 @@ from acmeerkat.utils import is_valid_domain
 ])
 def test_is_valid_domain(domain, valid):
     assert is_valid_domain(domain) == valid
+
+
+@pytest.mark.parametrize('d', [
+    datetime.now(tz=timezone.utc),
+    datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+])
+def test_isoformat_roundtrip(d):
+    bs = bin_isoformat(d)
+    assert bin_fromisoformat(bs) == d
+    assert bs.endswith(b'Z')
+
+
+@pytest.mark.parametrize('d', [
+    datetime.now(),
+    datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone(timedelta(hours=5))),
+])
+def test_isoformat_requires_utc(d):
+    with pytest.raises(ValueError):
+        bin_isoformat(datetime.now())

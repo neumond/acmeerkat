@@ -6,6 +6,7 @@ openssl s_client -connect example.org:443
 """
 
 import re
+import subprocess
 from collections import abc
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,6 +72,40 @@ def _iter_certs(f: Path) -> abc.Iterator[
         first = False
 
 
+def get_cert_domains(pem):
+    p = subprocess.run(
+        [
+            'openssl', 'x509', '-in', '/dev/stdin',
+            '-noout', '-text',
+        ],
+        input=pem,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=True)
+
+    r = set()
+    pos = p.stdout.index(b'Subject: ')
+    epos = p.stdout.index(b'\n', pos)
+    for i in (
+        p.stdout[pos:epos].decode('utf-8')
+        .removeprefix('Subject: ').strip().split(',')
+    ):
+        i = i.strip()
+        if i.startswith('CN='):
+            r.add(i.removeprefix('CN='))
+
+    pos = p.stdout.find(b'X509v3 Subject Alternative Name:')
+    if pos >= 0:
+        pos = p.stdout.index(b'\n', pos) + 1
+        epos = p.stdout.index(b'\n', pos)
+        for i in p.stdout[pos:epos].decode('utf-8').strip().split(','):
+            i = i.strip()
+            assert i.startswith('DNS:')
+            r.add(i.removeprefix('DNS:'))
+
+    return frozenset(r)
+
+
 @pytest.mark.parametrize('chainfile', _load_chains(Path(__file__).parent))
 def test_chain(chainfile: Path) -> None:
     for pem, leaf, nb, na in _iter_certs(chainfile):
@@ -78,3 +113,4 @@ def test_chain(chainfile: Path) -> None:
         assert cinfo.is_leaf == leaf
         assert cinfo.not_before == nb
         assert cinfo.not_after == na
+        assert frozenset(cinfo.domains) == get_cert_domains(pem)

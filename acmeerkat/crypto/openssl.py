@@ -1,46 +1,44 @@
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from typing import cast, Literal
 
 from acmeerkat import (
-    Algorithm,
     BaseCrypto,
     BaseJsonWebPubKey,
-    BaseKeyParams,
     EcJsonWebPubKey,
-    EcKeyParams,
-    EcType,
     EdJsonWebPubKey,
-    EdKeyParams,
-    EdVariant,
     PrivateKey,
     RsaJsonWebPubKey,
-    RsaKeyParams,
-    RsaPssKeyParams,
 )
+from acmeerkat import alg_params as ap
 
 
 __all__ = ('OpenSslCrypto', )
 
 
-ALG_EXPLICIT_HASH = {
-    Algorithm.RS256: '-sha256',
-    Algorithm.RS384: '-sha384',
-    Algorithm.RS512: '-sha512',
+HASH_BY_ALG = {
+    'RS256': '-sha256',
+    'RS384': '-sha384',
+    'RS512': '-sha512',
 
-    Algorithm.PS256: '-sha256',
-    Algorithm.PS384: '-sha384',
-    Algorithm.PS512: '-sha512',
+    'PS256': '-sha256',
+    'PS384': '-sha384',
+    'PS512': '-sha512',
+}
+EC_CURVE = {
+    ap.Ec256: 'P-256',
+    ap.Ec384: 'P-384',
+    ap.Ec512: 'P-521',  # not a typo!
+}
+ED_ALG = {
+    ap.Ed25519: 'ED25519',
+    ap.Ed448: 'ED448',
 }
 RSA_PSS_PARAMS = {
-    Algorithm.PS256: ('sha256', '32'),
-    Algorithm.PS384: ('sha384', '48'),
-    Algorithm.PS512: ('sha512', '64'),
-}
-RSA_PSS_HASHALG = {
-    'SHA2-256': Algorithm.PS256,
-    'SHA2-384': Algorithm.PS384,
-    'SHA2-512': Algorithm.PS512,
+    ap.RsaPss256: ('sha256', '32'),
+    ap.RsaPss384: ('sha384', '48'),
+    ap.RsaPss512: ('sha512', '64'),
 }
 
 
@@ -55,32 +53,40 @@ class OpenSslCrypto(BaseCrypto):
     def _stderr(self) -> int | None:
         return None if self.debug else subprocess.DEVNULL
 
-    def generate_key_pair(self, params: BaseKeyParams) -> PrivateKey:
+    def generate_key_pair(self, alg_params: ap.BaseAlgParams) -> PrivateKey:
         gpk = []
-        match params:
-            case EcKeyParams():
+        apcls = type(alg_params)
+
+        if apcls in EC_CURVE:
+            gpk.extend([
+                '-algorithm', 'EC',
+                '-pkeyopt', f'ec_paramgen_curve:{EC_CURVE[apcls]}',
+                '-pkeyopt', 'ec_param_enc:named_curve'])
+
+        elif apcls in ED_ALG:
+            gpk.extend(['-algorithm', ED_ALG[apcls]])
+
+        elif (
+            issubclass(apcls, ap.BaseRsaParams)
+            # second check isn't really necessary, fooling mypy
+            and isinstance(alg_params, ap.BaseRsaParams)
+        ):
+            gpk.extend([
+                '-algorithm', (
+                    'RSA-PSS' if apcls in RSA_PSS_PARAMS else 'RSA'),
+                '-pkeyopt', f'rsa_keygen_bits:{alg_params.bits}',
+                '-pkeyopt', f'rsa_keygen_primes:{alg_params.primes}',
+                '-pkeyopt', f'rsa_keygen_pubexp:{alg_params.pubexp}'])
+            if apcls in RSA_PSS_PARAMS:
+                h, salt = RSA_PSS_PARAMS[apcls]
                 gpk.extend([
-                    '-algorithm', 'EC',
-                    '-pkeyopt', f'ec_paramgen_curve:{params.crv.value}',
-                    '-pkeyopt', 'ec_param_enc:named_curve'])
-            case RsaKeyParams():
-                gpk.extend([
-                    '-algorithm', (
-                        'RSA-PSS'
-                        if isinstance(params, RsaPssKeyParams) else
-                        'RSA'),
-                    '-pkeyopt', f'rsa_keygen_bits:{params.bits}',
-                    '-pkeyopt', f'rsa_keygen_primes:{params.primes}',
-                    '-pkeyopt', f'rsa_keygen_pubexp:{params.pubexp}'])
-                if isinstance(params, RsaPssKeyParams):
-                    h, salt = RSA_PSS_PARAMS[params.alg]
-                    gpk.extend([
-                        '-pkeyopt', f'rsa_pss_keygen_md:{h}',
-                        '-pkeyopt', f'rsa_pss_keygen_mgf1_md:{h}',
-                        '-pkeyopt', f'rsa_pss_keygen_saltlen:{salt}'])
-            case EdKeyParams():
-                gpk.extend([
-                    '-algorithm', params.crv.value.upper()])
+                    '-pkeyopt', f'rsa_pss_keygen_md:{h}',
+                    '-pkeyopt', f'rsa_pss_keygen_mgf1_md:{h}',
+                    '-pkeyopt', f'rsa_pss_keygen_saltlen:{salt}'])
+
+        else:
+            raise ValueError('Unsupported alg_params')
+
         p = subprocess.run(
             [
                 *self.openssl_cmd, 'genpkey', *gpk,
@@ -136,8 +142,11 @@ class OpenSslCrypto(BaseCrypto):
                 raise ValueError('EC pubkey must start with 04 byte')
             pub = pub[1:]
             half = len(pub) // 2
+            crv = single_line_sections['NIST CURVE']
+            if crv not in ('P-256', 'P-384', 'P-521'):
+                raise ValueError(f'Bad EC curve: {crv}')
             return EcJsonWebPubKey(
-                crv=EcType(single_line_sections['NIST CURVE']),
+                crv=cast(Literal['P-256', 'P-384', 'P-521'], crv),
                 x=pub[:half],
                 y=pub[half:])
 
@@ -146,21 +155,16 @@ class OpenSslCrypto(BaseCrypto):
             and 'modulus' in hex_section_parts
             and 'publicExponent' in single_line_sections
         ):
-            alg = None
-            if 'PSS Hash Algorithm' in single_line_sections:
-                alg = RSA_PSS_HASHALG[single_line_sections[
-                    'PSS Hash Algorithm']]
             return RsaJsonWebPubKey(
                 n=b''.join(hex_section_parts['modulus']),
-                e=int(single_line_sections['publicExponent'].split(' ', 1)[0]),
-                alg=alg)
+                e=int(single_line_sections['publicExponent'].split(' ', 1)[0]))
 
         if (
             'ED25519 Private-Key' in single_line_sections
             and 'priv' in hex_section_parts
         ):
             return EdJsonWebPubKey(
-                crv=EdVariant.Ed25519,
+                crv='Ed25519',
                 x=b''.join(hex_section_parts['priv']))
 
         if (
@@ -168,7 +172,7 @@ class OpenSslCrypto(BaseCrypto):
             and 'priv' in hex_section_parts
         ):
             return EdJsonWebPubKey(
-                crv=EdVariant.Ed448,
+                crv='Ed448',
                 x=b''.join(hex_section_parts['priv']))
 
         raise ValueError('Unknown key type')
@@ -191,18 +195,14 @@ class OpenSslCrypto(BaseCrypto):
 
     def sign(
         self,
-        alg: Algorithm,
+        alg_params: ap.BaseAlgParams,
         key_pair: PrivateKey,
         data: bytes,
     ) -> bytes:
         cmd = []
-        if (h := ALG_EXPLICIT_HASH.get(alg, None)):
+        if (h := HASH_BY_ALG.get(alg_params.get_jws_alg(), None)):
             cmd.append(h)
-        if alg in (
-            Algorithm.PS256,
-            Algorithm.PS384,
-            Algorithm.PS512,
-        ):
+        if alg_params.get_jws_alg().startswith('PS'):
             cmd.extend(['-sigopt', 'rsa_padding_mode:pss'])
 
         with tempfile.NamedTemporaryFile(mode='wb') as tfile:
@@ -240,12 +240,14 @@ class OpenSslCrypto(BaseCrypto):
                 # asn1 keeps signature as 2 integers
                 # with variable size binary representation
                 match crv:
-                    case EcType.P_256:
+                    case 'P-256':
                         s = 32
-                    case EcType.P_384:
+                    case 'P-384':
                         s = 48
-                    case EcType.P_521:
+                    case 'P-521':
                         s = 66
+                    case _:
+                        raise ValueError
                 p1 = p1.rjust(s, b'\0')
                 p2 = p2.rjust(s, b'\0')
                 return p1 + p2
@@ -255,12 +257,12 @@ class OpenSslCrypto(BaseCrypto):
 
     def generate_csr(
         self,
-        alg: Algorithm,
+        alg_params: ap.BaseAlgParams,
         key_pair: PrivateKey,
-        domains: list[str],
+        domains: tuple[str, ...],
     ) -> bytes:
         cmd = []
-        if (h := ALG_EXPLICIT_HASH.get(alg, None)):
+        if (h := HASH_BY_ALG.get(alg_params.get_jws_alg(), None)):
             cmd.append(h)
         san = ', '.join(f'DNS:{d}' for d in domains)
         p = subprocess.run(

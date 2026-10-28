@@ -37,9 +37,9 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
-sys.path.insert(0, 'acmeerkat.0.1.0.zip')
+sys.path.insert(0, 'acmeerkat.0.2.0.zip')
 
-from acmeerkat import ProviderAccount, KVNamespace, CertUpdater
+from acmeerkat import Account, KVNamespace, CertUpdater, DirectoryUrl
 from acmeerkat.challenge.dnspersist01 import DnsPersist01
 from acmeerkat.crypto.openssl import OpenSslCrypto
 from acmeerkat.https.urllib import UrllibHttpsClient
@@ -50,31 +50,49 @@ storage = FilePairKVStorage(Path('kv1.dat'), Path('kv2.dat'))
 https_client = UrllibHttpsClient()
 reload_nginx = False
 
-account1 = ProviderAccount(
-    directory_url='https://acme-staging-v02.api.letsencrypt.org/directory',
-    storage_ns=KVNamespace(storage, b'account1/'),
+account1 = Account(
+    id='account1',
+    storage=storage,
     https_client=https_client,
-    crypto=crypto)
+    crypto=crypto,
+    next_alg_params=Ec384())
+account1.refresh()
+
+if not account1.is_valid():
+    account1.register(
+        directory_url=DirectoryUrl.letsencrypt_staging,
+        contacts=('mailto:hello@example.org', ))
+
+if (
+    account1.will_change_any(alg_params=True)
+    or account1.get_key_age() >= timedelta(days=90)
+):
+    account1.rollover_key()
 
 cu = CertUpdater(
-    domains=['example.org', '*.example.org'],
-    profile='tlsserver',
+    id='example.org',
     account=account1,
-    challenges=[DnsPersist01()],
-    storage_ns=KVNamespace(storage, b'certs/example.org/'))
+    next_domains=('example.org', '*.example.org'),
+    next_alg_params=Ec384(),
+    next_profile='tlsserver')
 
-if cu.get_remaining_validity() <= timedelta(days=3):
-    cu.issue_new_certificate()
-    print('✅ Issued new certificate')
-    cu.write_nginx_files(
-        cert_chain='/etc/nginx/certs/example.org.crt',
-        private_key='/etc/nginx/certs/example.org.key')
-    reload_nginx = True
+if (
+    cu.will_change_any(domains=True, alg_params=True)
+    or cu.get_remaining_validity() <= timedelta(days=3)
+):
+    if cu.issue_new_certificate(challenges=(DnsPersist01(), )):
+        print('✅ Issued new certificate')
+        cu.get_bundle().write_nginx_files(
+            cert_chain='/etc/nginx/certs/example.org.crt',
+            private_key='/etc/nginx/certs/example.org.key')
+        reload_nginx = True
+    else:
+        print('❌ Failed to issue a certificate')
 else:
     print('Not yet to be updated')
 
 if reload_nginx:
     pid = int(Path('/run/nginx.pid').read_text())
     os.kill(pid, signal.SIGHUP)
-    print('✅ Restarted nginx')
+    print('✅ Reloaded nginx')
 ```

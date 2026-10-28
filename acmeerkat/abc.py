@@ -2,9 +2,9 @@ import contextlib
 from collections import abc
 from typing import ClassVar, Literal
 
-from .jwk import BaseJsonWebPubKey, BaseKeyParams
-from .types import (
-    Algorithm, AuthzIdentifier, ChallengeConfig, PrivateKey)
+from .jwk import BaseJsonWebPubKey
+from .alg_params import BaseAlgParams
+from .types import AuthzIdentifier, ChallengeConfig, PrivateKey
 
 
 __all__ = (
@@ -24,7 +24,10 @@ class BaseKVStorage:
         raise NotImplementedError
 
     def get(self, k: bytes) -> bytes:
-        "Non-existent key yields b''"
+        """
+        Non-existent key yields b''
+        Highly recommended to cache repeated reads
+        """
         raise NotImplementedError
 
 
@@ -49,7 +52,7 @@ class BaseHttpsClient:
 
 
 class BaseCrypto:
-    def generate_key_pair(self, params: BaseKeyParams) -> PrivateKey:
+    def generate_key_pair(self, alg_params: BaseAlgParams) -> PrivateKey:
         raise NotImplementedError
 
     def check_key_pair(self, key_pair: PrivateKey) -> bool:
@@ -59,13 +62,14 @@ class BaseCrypto:
         raise NotImplementedError
 
     def sign(
-        self, alg: Algorithm, key_pair: PrivateKey, data: bytes,
+        self, alg_params: BaseAlgParams, key_pair: PrivateKey, data: bytes,
     ) -> bytes:
         # suitable for rfc7518 json web signature, but without b64 encoding
         raise NotImplementedError
 
     def generate_csr(
-        self, alg: Algorithm, key_pair: PrivateKey, domains: list[str],
+        self, alg_params: BaseAlgParams, key_pair: PrivateKey,
+        domains: tuple[str, ...],
     ) -> bytes:
         raise NotImplementedError
 

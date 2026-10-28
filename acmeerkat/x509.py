@@ -45,6 +45,9 @@ class TlvReader:
         while len(self.peek(1)) > 0:
             yield self.read_tlv(require_tag)
 
+    def reset(self) -> None:
+        self.off = 0
+
 
 def _pem_to_der(pem: bytes) -> bytes:
     return base64.b64decode(
@@ -74,6 +77,34 @@ def _parse_time(tag: int, value: TlvReader) -> datetime:
     return dt
 
 
+def _parse_subject_cn(subject: TlvReader) -> str | None:
+    for _, rdn in subject.iter_sequence_of_tlv(0x31):
+        for _, atv in rdn.iter_sequence_of_tlv(0x30):
+            _, oid = atv.read_tlv(0x06)
+            if oid.peek(100) == b'\x55\x04\x03':  # 2.5.4.3, commonName
+                _, val = atv.read_tlv()
+                return bytes(val.b).decode('utf-8')
+    return None
+
+
+def _parse_san(extensions: TlvReader) -> list[str]:
+    for _, ext in extensions.iter_sequence_of_tlv(0x30):
+        _, oid = ext.read_tlv()
+        if oid.peek(100) != b'\x55\x1D\x11':  # 2.5.29.17, subjectAltName
+            continue
+        if ext.peek(1) == b'\x01':
+            ext.read_tlv()  # optional `critical`
+        _, ext_val = ext.read_tlv()
+        _, general_names = ext_val.read_tlv(0x30)
+        names = []
+        while general_names.peek(1):
+            tag, value = general_names.read_tlv()
+            if tag == 0x82:  # dNSName [2] IA5String
+                names.append(bytes(value.b).decode('ascii'))
+        return names
+    return []
+
+
 def _check_basic_constraints(extensions: TlvReader) -> bool:
     for _, ext in extensions.iter_sequence_of_tlv(0x30):
         _, oid = ext.read_tlv()
@@ -95,6 +126,7 @@ class CertInfo:
     is_leaf: bool
     not_before: datetime
     not_after: datetime
+    domains: tuple[str, ...]
 
 
 def parse_cert(pem: bytes) -> CertInfo:
@@ -107,15 +139,24 @@ def parse_cert(pem: bytes) -> CertInfo:
     tbs.read_tlv()  # signature
     tbs.read_tlv()  # issuer
     _, validity = tbs.read_tlv(0x30)  # validity
-    tbs.read_tlv()  # subject
+    _, subject = tbs.read_tlv()  # subject
     tbs.read_tlv()  # subjectPublicKeyInfo
     is_leaf = True
+    san = []
     while tbs.peek(1):
         # optional `issuerUniqueID`, `subjectUniqueID`, `extensions`
         tag, extensions = tbs.read_tlv()
         if tag == 0xA3:
-            is_leaf = _check_basic_constraints(extensions.read_tlv()[1])
+            _, exts = extensions.read_tlv(0x30)
+            is_leaf = _check_basic_constraints(exts)
+            exts.reset()
+            san = _parse_san(exts)
             break
     not_before = _parse_time(*validity.read_tlv())
     not_after = _parse_time(*validity.read_tlv())
-    return CertInfo(is_leaf, not_before, not_after)
+    if (
+        (subject_cn := _parse_subject_cn(subject)) is not None
+        and subject_cn not in san
+    ):
+        san.insert(0, subject_cn)
+    return CertInfo(is_leaf, not_before, not_after, tuple(san))

@@ -1,22 +1,34 @@
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, InitVar
-from datetime import datetime, timedelta, timezone
-from functools import cached_property
-from pathlib import Path
+from datetime import datetime, timedelta
+from enum import StrEnum
 from random import random
 from time import sleep
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar
 
-from .error import AcmeError, ChallengeTypeMismatch, InvalidOrder
-from .utils import b64_jose, bin_json_dumps, jws_serialize, is_valid_domain
-from . import abc, error, jwk, pem, types as t
+from .alg_params import BaseAlgParams, Ec384
+from .utils import (
+    b64_jose,
+    bin_fromisoformat,
+    bin_isoformat,
+    bin_json_dumps,
+    bin_json_loads,
+    bin_optstr_dump,
+    bin_optstr_load,
+    bin_str_dump,
+    bin_str_load,
+    is_valid_domain,
+    jws_serialize,
+    utc_now,
+)
+from . import abc, error, pem, types as t
 
 
 __all__ = (
+    'Account',
     'CertUpdater',
     'KVNamespace',
-    'ProviderAccount',
 )
 
 
@@ -26,26 +38,25 @@ https://raw.githubusercontent.com/letsencrypt/boulder/main/docs/acme-divergences
 """
 
 
-@dataclass
+@dataclass(frozen=True)
 class KVNamespace:
     storage: abc.BaseKVStorage
     prefix: bytes = b''
 
+    # TODO: rename methods ns_update, ns_get
+    # to be incompatible with BaseKVStorage
+
     def update(self, u: dict[bytes, bytes]) -> None:
-        return self.storage.update({
+        self.storage.update({
             self.prefix + k: v
             for k, v in u.items()})
 
     def get(self, k: bytes) -> bytes:
         return self.storage.get(self.prefix + k)
 
-    def descend(self, prefix: bytes) -> Self:
-        return type(self)(self.storage, self.prefix + prefix)
-
 
 @dataclass
 class HttpsClientWrap:
-    directory_url: str
     https_client: abc.BaseHttpsClient
     user_agent: str
     accept_language: str
@@ -84,7 +95,7 @@ class HttpsClientWrap:
             case self.JSON_MIME | self.JOSE_JSON_MIME | self.PROBLEM_JSON_MIME:
                 data = json.loads(data.decode('utf-8'))
                 if bad_status:
-                    raise AcmeError.from_json(data)
+                    raise error.AcmeError.from_json(data)
             case _:
                 if bad_status:
                     raise Exception(
@@ -100,24 +111,20 @@ class HttpsClientWrap:
 
         return data
 
-    @cached_property
-    def directory(self) -> t.DirectoryDict:
+    def get_directory(self, directory_url: str) -> t.DirectoryDict:
         r = self._resp(self.https_client.request(
-            'GET', self.directory_url,
+            'GET', directory_url,
             None,
             self._def_hdrs(),
             [self.CTYPE_HEADER]))
-        if not (
-            isinstance(r, dict)
-            and t.is_valid_directory_dict(r)
-        ):
+        if not t.is_valid_directory_dict(r):
             raise ValueError('Invalid directory')
         return r
 
-    def take_nonce(self) -> str:
+    def take_nonce(self, new_nonce_url: str) -> str:
         if not self._nonce:
             self._resp(self.https_client.request(
-                'HEAD', self.directory['newNonce'],
+                'HEAD', new_nonce_url,
                 None,
                 self._def_hdrs(),
                 [self.NONCE_HEADER]))
@@ -143,188 +150,190 @@ class HttpsClientWrap:
         ), capture_headers)
 
 
-def _check_alg_key_params(
-    a: t.Algorithm, key_params: jwk.BaseKeyParams,
-) -> None:
-    match a, key_params:
-        case (t.Algorithm.ES256, jwk.EcKeyParams(crv=jwk.EcType.P_256)):
-            return
-        case (t.Algorithm.ES384, jwk.EcKeyParams(crv=jwk.EcType.P_384)):
-            return
-        case (t.Algorithm.ES512, jwk.EcKeyParams(crv=jwk.EcType.P_521)):
-            return
-        case (t.Algorithm.EdDSA, jwk.EdKeyParams()):
-            return
-        case (
-            t.Algorithm.RS256 | t.Algorithm.RS384 | t.Algorithm.RS512,
-            jwk.RsaKeyParams(),
-        ) if not isinstance(key_params, jwk.RsaPssKeyParams):
-            return
-        case (t.Algorithm.PS256, jwk.RsaPssKeyParams(alg=t.Algorithm.PS256)):
-            return
-        case (t.Algorithm.PS384, jwk.RsaPssKeyParams(alg=t.Algorithm.PS384)):
-            return
-        case (t.Algorithm.PS512, jwk.RsaPssKeyParams(alg=t.Algorithm.PS512)):
-            return
-    raise ValueError(
-        'Invalid combination of Algorithm and KeyParams: '
-        f'{a} + {key_params}')
+class DirectoryUrl(StrEnum):
+    letsencrypt_staging = (
+        'https://acme-staging-v02.api.letsencrypt.org/directory')
+    letsencrypt = (
+        'https://acme-v02.api.letsencrypt.org/directory')
 
 
-# too many parameters to guarantee stable order, therefore kw_only
-@dataclass(kw_only=True)
-class ProviderAccount:
-    directory_url: InitVar[str]
-    storage_ns: KVNamespace
+def _autofix_rollover_key(fn: Callable[..., Any]) -> Callable[..., Any]:
+    def wrapper(self: 'Account', *a: Any, **kw: Any) -> Any:
+        while True:
+            try:
+                r = fn(self, *a, **kw)
+            except error.AccountDoesNotExist as e:
+                if self._has_rollover_key():
+                    self._ns.update(self._switch_to_rollover_key())
+                    continue
+                raise e
+            if self._has_rollover_key():
+                self._ns.update(self._drop_rollover_key())
+            return r
+    return wrapper
+
+
+@dataclass(frozen=True)
+class Account:
+    "ACME account"
+    id: InitVar[str]
+    storage: abc.BaseKVStorage
     https_client: InitVar[abc.BaseHttpsClient]
     crypto: abc.BaseCrypto
-
-    # list of URIs, possibly with 'mailto:' scheme
-    # NOTE: LE doesn't use or store this field anyway
-    contacts: list[str] = field(default_factory=list)
-    auto_create_account: bool = True
-
-    # parameters for account key pair
-    # used on account creation or key rollover
-    # otherwise latest data from storage wins
-    #
-    # As of oct 2026 on LE Staging:
-    # Unable to validate JWS ... expected one of [RS256 ES256 ES384 ES512]
-    # Unable to validate JWS ... (RSA) key size not supported: 1024
-    # RS256 + 2048: fine
-    alg: t.Algorithm = t.Algorithm.ES256
-    key_params: jwk.BaseKeyParams = field(
-        default_factory=lambda: jwk.EcKeyParams(crv=jwk.EcType.P_256))
-
-    user_agent: InitVar[str] = 'Acmeerkat/0.1'
+    next_alg_params: BaseAlgParams = Ec384()
     accept_language: InitVar[str] = 'en, *;q=0.5'  # localized error messages
+    user_agent: InitVar[str] = 'Acmeerkat/0.2'
+    ns_template: InitVar[str] = 'account/{id}/'
 
     _hwrap: HttpsClientWrap = field(init=False)
+    _ns: KVNamespace = field(init=False)
 
     def __post_init__(
         self,
-        directory_url: str,
+        id: str,
         https_client: abc.BaseHttpsClient,
-        user_agent: str,
         accept_language: str,
+        user_agent: str,
+        ns_template: str,
     ) -> None:
-        _check_alg_key_params(self.alg, self.key_params)
-        self._hwrap = HttpsClientWrap(
-            directory_url,
+        object.__setattr__(self, '_hwrap', HttpsClientWrap(
             https_client,
             user_agent,
-            accept_language)
+            accept_language))
+        object.__setattr__(self, '_ns', KVNamespace(
+            self.storage,
+            ns_template.format(id=id).encode('utf-8')))
 
-    @cached_property
-    def _key_pair(self) -> t.PrivateKey:
-        kp = self.storage_ns.get(b'keypair')
-        if not kp:
-            if not self.auto_create_account:
-                raise Exception(
-                    'No account key available, turn on auto_create_account')
-            kp = self.crypto.generate_key_pair(self.key_params)
-            self.storage_ns.update({
-                b'alg': self.alg.to_bytes(),
-                b'keypair': kp})
-        if not self.crypto.check_key_pair(kp):
-            raise Exception('Invalid key pair')
-        return kp
+    # public properties
 
-    @cached_property
-    def _alg(self) -> t.Algorithm:
-        _ = self._key_pair  # load key pair
-        return t.Algorithm.from_bytes(self.storage_ns.get(b'alg'))
+    @property
+    def directory_url(self) -> str:
+        if not (v := self._ns.get(b'directory_url')):
+            raise error.NoAccountError
+        return bin_str_load(v)
 
-    @cached_property
-    def _json_web_pub_key(self) -> jwk.BaseJsonWebPubKey:
-        return self.crypto.json_web_pub_key(self._key_pair)
+    @property
+    def directory(self) -> t.DirectoryDict:
+        if not (v := self._ns.get(b'directory')):
+            raise error.NoAccountError
+        d = bin_json_loads(v)
+        if not t.is_valid_directory_dict(d):
+            raise ValueError
+        return d
 
-    @cached_property
-    def _thumbprint(self) -> str:
-        return self._json_web_pub_key.thumbprint()
+    @property
+    def alg_params(self) -> BaseAlgParams:
+        if not (v := self._ns.get(b'alg_params')):
+            raise error.NoAccountError
+        return BaseAlgParams.from_bytes(v)
 
-    def _reload_alg_key(self) -> None:
-        try:
-            del self._key_pair
-        except AttributeError:
-            pass
-        try:
-            del self._alg
-        except AttributeError:
-            pass
-        try:
-            del self._json_web_pub_key
-        except AttributeError:
-            pass
-        try:
-            del self._thumbprint
-        except AttributeError:
-            pass
+    @property
+    def private_key(self) -> bytes:
+        if not (v := self._ns.get(b'private_key')):
+            raise error.NoAccountError
+        return v
+
+    @property
+    def key_generated_at(self) -> datetime:
+        if not (v := self._ns.get(b'key_generated_at')):
+            raise error.NoAccountError
+        return bin_fromisoformat(v)
+
+    @property
+    def contacts(self) -> tuple[str, ...]:
+        if not (v := self._ns.get(b'contacts')):
+            raise error.NoAccountError
+        cc = bin_json_loads(v)
+        if not isinstance(cc, list) or not all(isinstance(c, str) for c in cc):
+            raise ValueError
+        return tuple(cc)
+
+    @property
+    def agreed_to_tos(self) -> datetime:
+        if not (v := self._ns.get(b'agreed_to_tos')):
+            raise error.NoAccountError
+        return bin_fromisoformat(v)
+
+    @property
+    def account_url(self) -> str:
+        if not (v := self._ns.get(b'account_url')):
+            raise error.NoAccountError
+        return bin_str_load(v)
+
+    @property
+    def account(self) -> t.AccountDict:
+        if not (v := self._ns.get(b'account')):
+            raise error.NoAccountError
+        a = bin_json_loads(v)
+        if not t.is_valid_account_dict(a):
+            raise ValueError
+        return a
+
+    # protected methods
 
     def _has_rollover_key(self) -> bool:
-        return bool(self.storage_ns.get(b'rollover/keypair'))
+        return bool(self._ns.get(b'rollover/private_key'))
 
-    def _drop_rollover_key(self) -> None:
-        self.storage_ns.update({
-            b'rollover/alg': b'',
-            b'rollover/keypair': b''})
+    def _drop_rollover_key(self) -> dict[bytes, bytes]:
+        return {
+            b'rollover/alg_params': b'',
+            b'rollover/private_key': b''}
 
-    def _switch_to_rollover_key(self) -> None:
-        self.storage_ns.update({
-            b'alg': self.storage_ns.get(b'rollover/alg'),
-            b'keypair': self.storage_ns.get(b'rollover/keypair'),
-            b'rollover/alg': b'',
-            b'rollover/keypair': b''})
-        self._reload_alg_key()
+    def _switch_to_rollover_key(self) -> dict[bytes, bytes]:
+        return {
+            b'alg_params': self._ns.get(b'rollover/alg_params'),
+            b'private_key': self._ns.get(b'rollover/private_key'),
+            b'rollover/alg_params': b'',
+            b'rollover/private_key': b''}
 
     def _sign_with_alg_key(
         self, protected: str, payload: str,
-        alg: t.Algorithm, kp: t.PrivateKey,
+        alg_params: BaseAlgParams, kp: t.PrivateKey,
     ) -> str:
         return b64_jose(self.crypto.sign(
-            alg, kp, f'{protected}.{payload}'.encode('ascii')))
+            alg_params, kp, f'{protected}.{payload}'.encode('ascii')))
 
     def _sign_request(self, d: dict[Any, Any]) -> None:
         d['signature'] = self._sign_with_alg_key(
-            d['protected'], d['payload'], self._alg, self._key_pair)
+            d['protected'], d['payload'], self.alg_params, self.private_key)
 
+    @_autofix_rollover_key
     def _call_new_account(self, payload: dict[Any, Any]) -> t.AccountDict:
+        directory = self.directory
+        jwk = self.crypto.json_web_pub_key(self.private_key)
         d = {
             'protected': jws_serialize({
-                'alg': self._alg.value,
-                'jwk': self._json_web_pub_key.to_json(),
-                'nonce': self._hwrap.take_nonce(),
-                'url': self.directory['newAccount']}),
+                'alg': self.alg_params.get_jws_alg(),
+                'jwk': jwk.to_json(),
+                'nonce': self._hwrap.take_nonce(directory['newNonce']),
+                'url': directory['newAccount']}),
             'payload': jws_serialize(payload)}
         self._sign_request(d)
         r = self._hwrap.post(
-            self.directory['newAccount'], d, ('Location', ))
-        if not (
-            isinstance(r, dict)
-            and t.is_valid_account_dict(r)
-        ):
-            raise ValueError('Invalid account')
+            directory['newAccount'], d, ('Location', ))
+        if not t.is_valid_account_dict(r):
+            raise ValueError
         return r
+
+    def _acc_update(self, acc: dict[Any, Any]) -> dict[bytes, bytes]:
+        upd = {}
+        if '__Location' in acc:
+            upd[b'account_url'] = bin_str_dump(acc.pop('__Location'))
+        if not t.is_valid_account_dict(acc):
+            raise ValueError(f'Invalid account data: {acc!r}')
+        upd[b'account'] = bin_json_dumps(acc)
+        return upd
 
     def _make_protected(self, url: str) -> str:
         return jws_serialize({
-            'alg': self._alg.value,
-            'kid': self.account['__Location'],
-            'nonce': self._hwrap.take_nonce(),
+            'alg': self.alg_params.get_jws_alg(),
+            'kid': self.account_url,
+            'nonce': self._hwrap.take_nonce(self.directory['newNonce']),
             'url': url})
-
-    def _update_account(self, a: dict[Any, Any]) -> t.AccountDict:
-        if '__Location' not in a:
-            # account updates do not return Location header
-            # filling here old value to pass validation
-            a['__Location'] = self.account['__Location']
-        if not t.is_valid_account_dict(a):
-            raise ValueError(f'Invalid account: {a!r}')
-        self.account = a
-        return a
 
     # half-protected methods, used by CertUpdater
 
+    @_autofix_rollover_key
     def _do_signed_request(
         self, url: str,
         payload: dict[Any, Any] | str,
@@ -342,6 +351,7 @@ class ProviderAccount:
             raise Exception('Expected json response')
         return r
 
+    @_autofix_rollover_key
     def _download_certificate_request(self, url: str) -> bytes:
         d = {
             'protected': self._make_protected(url),
@@ -352,108 +362,199 @@ class ProviderAccount:
             raise Exception('Expected raw bytes response')
         return r
 
-    # public methods & properties
+    def _get_thumbprint(self) -> str:
+        jwk = self.crypto.json_web_pub_key(self.private_key)
+        return jwk.thumbprint()
 
-    @property
-    def directory(self) -> t.DirectoryDict:
-        return self._hwrap.directory
+    # public methods
 
-    @cached_property
-    def account(self) -> t.AccountDict:
-        while True:
-            try:
-                a = self._call_new_account({
-                    'onlyReturnExisting': True})
-            except error.AccountDoesNotExist as e:
-                if self._has_rollover_key():
-                    self._switch_to_rollover_key()
-                    continue
-                if not self.auto_create_account:
-                    raise e
-                a = self._call_new_account({
-                    'termsOfServiceAgreed': True,
-                    'contact': self.contacts})
-            else:
-                if self._has_rollover_key():
-                    self._drop_rollover_key()
-            break
-        if (st := a.get('status')) != 'valid':
-            raise Exception(f'Bad account status: {st}')
-        if not a.get('__Location'):
-            raise Exception('Unknown account location')
-        # TODO: update account profile
-        return a
+    def will_change_any(self, alg_params: bool = False) -> bool:
+        try:
+            if alg_params and (self.next_alg_params != self.alg_params):
+                return True
+        except error.NoAccountError:
+            return True
+        return False
 
-    def rollover_key(self) -> t.AccountDict:
-        _ = self.account  # preload account before generating new key
+    def get_key_age(self, now: datetime | None = None) -> timedelta:
+        try:
+            return (utc_now() if now is None else now) - self.key_generated_at
+        except error.NoAccountError:
+            return timedelta(0)
 
-        new_alg = self.alg
-        new_kp = self.crypto.generate_key_pair(self.key_params)
-        # store new key nearby, do not rewrite existing key
-        self.storage_ns.update({
-            b'rollover/alg': new_alg.to_bytes(),
-            b'rollover/keypair': new_kp})
+    def exists(self) -> bool:
+        "Check if account exists (can read properties)"
+        return self.account is not None
+
+    def is_valid(self) -> bool:
+        "Check if account exists and is valid (can issue certificates)"
+        account = self.account
+        if account is None:
+            return False
+        return account['status'] == 'valid'
+
+    def refresh(self, directory: bool = True, account: bool = True) -> None:
+        """
+        Refresh directory and account data from API
+        Does nothing if not registered
+        """
+        upd = {}
+        if directory and (du := self.directory_url) is not None:
+            upd[b'directory'] = bin_json_dumps(self._hwrap.get_directory(du))
+        if account and self.private_key is not None:
+            a_json = self._call_new_account({'onlyReturnExisting': True})
+            upd[b'account_url'] = bin_str_dump(a_json.pop('__Location'))
+            upd[b'account'] = bin_json_dumps(a_json)
+        if upd:
+            self._ns.update(upd)
+
+    def register(
+        self,
+        directory_url: str = DirectoryUrl.letsencrypt_staging,
+        contacts: tuple[str, ...] = (),
+        agree_to_tos: bool = True,
+    ) -> None:
+        """
+        Register new account
+
+        Throws error if current account exists and is not deactivated
+
+        Valid `alg_params` as of oct 2026 on LE Staging:
+        RS256 (at least 2048 bits), ES256, ES384, ES512
+
+        `contacts` is list of URIs, including 'mailto:' scheme
+        NOTE: LE doesn't use or store this field anymore, but it's still in RFC
+        """
+        if self.is_valid():
+            raise error.ValidAccountExists
+
+        upd = {
+            b'directory_url': bin_str_dump(directory_url),
+            b'alg_params': self.next_alg_params.to_bytes(),
+            b'contacts': bin_json_dumps(contacts),
+            b'rollover/alg_params': b'',
+            b'rollover/private_key': b''}
+
+        directory = self._hwrap.get_directory(directory_url)
+        upd[b'directory'] = bin_json_dumps(directory)
+
+        kp = self.crypto.generate_key_pair(self.next_alg_params)
+        if not self.crypto.check_key_pair(kp):
+            raise Exception('Invalid key pair')
+        upd[b'private_key'] = kp
+
+        now = bin_isoformat(utc_now())
+        upd[b'key_generated_at'] = now
+        if agree_to_tos:
+            upd[b'agreed_to_tos'] = now
+
+        acc_json = self._call_new_account({
+            'termsOfServiceAgreed': agree_to_tos,
+            'contact': self.contacts})
+        upd[b'account_url'] = bin_str_dump(acc_json.pop('__Location'))
+        upd[b'account'] = bin_json_dumps(acc_json)
+
+        self._ns.update(upd)
+
+    def rollover_key(self) -> None:
+        "Generate and replace account key pair"
+        directory = self.directory
+        old_kp = self.private_key
+        new_kp = self.crypto.generate_key_pair(self.next_alg_params)
+        # store new key nearby, do not rewrite existing key just yet
+        self._ns.update({
+            b'rollover/alg_params': self.next_alg_params.to_bytes(),
+            b'rollover/private_key': new_kp})
 
         inner = {
             'protected': jws_serialize({
-                'alg': new_alg.value,
+                'alg': self.next_alg_params.get_jws_alg(),
                 'jwk': self.crypto.json_web_pub_key(new_kp).to_json(),
-                'url': self.directory['keyChange'],
+                'url': directory['keyChange'],
             }),
             'payload': jws_serialize({
-                'account': self.account['__Location'],
-                'oldKey': self._json_web_pub_key.to_json(),
+                'account': self.account_url,
+                'oldKey': self.crypto.json_web_pub_key(old_kp).to_json(),
             })}
         inner['signature'] = self._sign_with_alg_key(
-            inner['protected'], inner['payload'], new_alg, new_kp)
+            inner['protected'], inner['payload'],
+            self.next_alg_params, new_kp)
 
         try:
-            resp = self._do_signed_request(
-                self.directory['keyChange'],
-                inner)
+            acc = self._do_signed_request(
+                directory['keyChange'], inner)
         except (
             error.BadSignatureAlgorithm,  # algorithm not supported
             error.BadPublicKey,  # bad parameters, e.g. low RSA bits
             error.Malformed,  # algorithm-keypair inconsistency
         ) as e:
-            self._drop_rollover_key()
+            self._ns.update(self._drop_rollover_key())
             raise e
 
-        self._switch_to_rollover_key()
-        return self._update_account(resp)
+        self._ns.update({
+            **self._acc_update(acc),
+            **self._switch_to_rollover_key()})
 
-    def deactivate(self, drop_key: bool = True) -> t.AccountDict:
-        resp = self._do_signed_request(
-            self.account['__Location'],
-            {'status': 'deactivated'})
-        if drop_key:
-            self.storage_ns.update({
-                b'alg': b'',
-                b'keypair': b''})
-        return self._update_account(resp)
+    def update_contacts(self, contacts: tuple[str, ...]) -> None:
+        acc = self._do_signed_request(
+            self.account_url, {'contact': contacts})
+        self._ns.update({
+            b'contacts': bin_json_dumps(contacts),
+            **self._acc_update(acc)})
 
-    def update_contacts(self) -> t.AccountDict:
-        # NOTE: does nothing on LE
-        resp = self._do_signed_request(
-            self.account['__Location'],
-            {'contact': self.contacts})
-        return self._update_account(resp)
+    def agree_to_tos(self) -> None:
+        "Agree again on updated ToS"
+        acc = self._do_signed_request(
+            self.account_url, {'termsOfServiceAgreed': True})
+        self._ns.update({
+            b'agreed_to_tos': bin_isoformat(utc_now()),
+            **self._acc_update(acc)})
 
-    def update_tos_agreement(self, agreed: bool = True) -> t.AccountDict:
-        # NOTE: does nothing on LE, even with agreed=False
-        resp = self._do_signed_request(
-            self.account['__Location'],
-            {'termsOfServiceAgreed': agreed})
-        return self._update_account(resp)
+    def deactivate(self, erase_storage: bool = True) -> None:
+        acc = self._do_signed_request(
+            self.account_url, {'status': 'deactivated'})
+        if erase_storage:
+            self._ns.update({
+                b'directory_url': b'',
+                b'directory': b'',
+                b'alg_params': b'',
+                b'private_key': b'',
+                b'key_generated_at': b'',
+                b'contacts': b'',
+                b'agreed_to_tos': b'',
+                b'account_url': b'',
+                b'account': b'',
+                b'rollover/alg_params': b'',
+                b'rollover/private_key': b''})
+        else:
+            self._ns.update(self._acc_update(acc))
 
-    def dns_persist_01_record(
-        self, issuer: str = 'letsencrypt.org',
+    def get_dns_persist_01_record(
+        self,
+        issuer: str | None = None,
         wildcard: bool = False,
         expires: datetime | None = None,
     ) -> str:
+        """
+        Craft `_validation-persist.` TXT record for DNS-PERSIST-01 challenge
+
+        Normally autodetects issuer field from directory data,
+        but you may override
+        """
         parts = []
+        if issuer is None:
+            directory = self.directory
+            if (
+                isinstance(meta := directory.get('meta', None), dict)
+                and isinstance(caai := meta.get('caaIdentities', None), list)
+                and len(caai) > 0
+                and isinstance(caai[0], str)
+            ):
+                issuer = caai[0]
+            else:
+                raise Exception("Can't detect issuer")
         parts.append(issuer)
-        parts.append(f"accounturi={self.account['__Location']}")
+        parts.append(f"accounturi={self.account_url}")
         if wildcard:
             parts.append('policy=wildcard')
         if expires:
@@ -468,52 +569,70 @@ def _retry_delay(resp: dict[Any, Any]) -> float:
 
 
 # too many parameters to guarantee stable order, therefore kw_only
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class CertUpdater:
+    id: InitVar[str]
+    account: Account
+
     # TODO: eventually support IPs
-    domains: list[str]
+    next_domains: tuple[str, ...]
+    next_alg_params: BaseAlgParams = Ec384()
     # TODO: some providers may not support certificate profiles
     # https://letsencrypt.org/docs/profiles/
     # classic (90d) | tlsserver (45d) | shortlived (160h)
-    profile: str
-    account: ProviderAccount
-    challenges: list[abc.BaseChallenge]  # sorted by priority
-    storage_ns: KVNamespace
+    next_profile: str | None = None
 
-    # parameters for certificate key pair
-    alg: t.Algorithm = t.Algorithm.ES256
-    key_params: jwk.BaseKeyParams = field(
-        default_factory=lambda: jwk.EcKeyParams(crv=jwk.EcType.P_256))
+    # by default, use the same storage as account
+    storage: InitVar[abc.BaseKVStorage | None] = None
+    ns_template: InitVar[str] = 'cert/{id}/'
+    _ns: KVNamespace = field(init=False)
 
     _CURRENT_ORDER_PREFIX: ClassVar[bytes] = b'current_order/'
     _LATEST_KEY: ClassVar[bytes] = b'latest'
 
-    def __post_init__(self) -> None:
-        _check_alg_key_params(self.alg, self.key_params)
-        for d in self.domains:
+    def __post_init__(
+        self,
+        id: str,
+        storage: abc.BaseKVStorage | None,
+        ns_template: str,
+    ) -> None:
+        for d in self.next_domains:
             if not is_valid_domain(d):
                 raise ValueError(
                     f'Invalid domain {d!r}, convert IDN into punycode')
+        if storage is None:
+            storage = self.account.storage
+        object.__setattr__(self, '_ns', KVNamespace(
+            storage,
+            ns_template.format(id=id).encode('utf-8')))
 
     def _find_chal_performer(
-        self, clist: list[t.ChallengeConfig],
+        self,
+        challenges: tuple[abc.BaseChallenge, ...],
+        clist: list[t.ChallengeConfig],
     ) -> tuple[abc.BaseChallenge, t.ChallengeConfig]:
-        for performer in self.challenges:
+        for performer in challenges:
             for c in clist:
                 if c['type'] != performer.TYPE:
                     continue
                 if c['status'] != 'pending':
                     continue
                 return performer, c
-        have = [p.TYPE for p in self.challenges]
+        have = [p.TYPE for p in challenges]
         got = [c['type'] for c in clist]
-        raise ChallengeTypeMismatch(
+        raise error.NoChallengeSolver(
             'Failed to find suitable challenge performer: '
             f'have={have!r} got={got!r}')
 
-    def _perform_authorization(self, url: str) -> None:
+    def _perform_authorization(
+        self,
+        challenges: tuple[abc.BaseChallenge, ...],
+        url: str,
+        account_thumbprint: str,
+    ) -> None:
         resp = self.account._do_signed_request(url, '')
         if resp['status'] == 'valid':
+            # already complete
             return
 
         if (st := resp['status']) != 'pending':
@@ -522,8 +641,10 @@ class CertUpdater:
         # TODO: check resp['expires']
 
         try:
-            performer, cconf = self._find_chal_performer(resp['challenges'])
-        except ChallengeTypeMismatch as e:
+            performer, cconf = self._find_chal_performer(
+                challenges,
+                resp['challenges'])
+        except error.NoChallengeSolver as e:
             self.account._do_signed_request(url, {
                 'status': 'deactivated'})
             raise e
@@ -531,7 +652,7 @@ class CertUpdater:
         with performer._perform(
             resp['identifier'],
             cconf,
-            self.account._thumbprint,
+            account_thumbprint,
         ):
             # initiate challenge
             resp = self.account._do_signed_request(
@@ -550,7 +671,86 @@ class CertUpdater:
                     case _:
                         raise Exception(f'Invalid authz state: {resp}')
 
-    def _store_new_bundle(self) -> None:
+    def _co_key(self, k: bytes) -> bytes:
+        return self._CURRENT_ORDER_PREFIX + k
+
+    def _co_clear(self) -> dict[bytes, bytes]:
+        return {
+            self._co_key(b'url'): b'',
+            self._co_key(b'profile'): b'',
+            self._co_key(b'alg_params'): b'',
+            self._co_key(b'private_key'): b''}
+
+    def issue_new_certificate(
+        self, challenges: tuple[abc.BaseChallenge, ...],
+    ) -> None:
+        # TODO: automatically remove order on error
+        # TODO: automatically remove order on domain mismatch
+
+        directory = self.account.directory
+
+        order_url = bin_str_load(self._ns.get(self._co_key(b'url')))
+        if order_url:
+            # get existing order
+            # TODO: retry on not found
+            order = self.account._do_signed_request(
+                order_url, '', ('Retry-After', ))
+        else:
+            # create new order
+            order = self.account._do_signed_request(
+                directory['newOrder'], {
+                    'identifiers': [
+                        {'type': 'dns', 'value': d}
+                        for d in self.next_domains],
+                    'profile': self.next_profile,
+                }, ('Location', ))
+            order_url = order['__Location']
+            self._ns.update({
+                self._co_key(b'url'): bin_str_dump(order_url),
+                self._co_key(b'profile'): bin_optstr_dump(self.next_profile)})
+
+        if order['status'] == 'pending':
+            # all authorizations must complete
+            # they cover 1-by-1 each domain
+            account_thumbprint = self.account._get_thumbprint()
+            try:
+                for a in order['authorizations']:
+                    self._perform_authorization(
+                        challenges, a, account_thumbprint)
+            except error.AcmeError as e:
+                self._ns.update(self._co_clear())
+                raise e
+            # all done, wait order status
+            while True:
+                order = self.account._do_signed_request(
+                    order_url, '', ('Retry-After', ))
+                if order['status'] != 'pending':
+                    break
+                sleep(_retry_delay(order))
+
+        if order['status'] == 'ready':
+            kp = self.account.crypto.generate_key_pair(self.next_alg_params)
+            self._ns.update({
+                self._co_key(b'alg_params'): self.next_alg_params.to_bytes(),
+                self._co_key(b'private_key'): kp})
+            csr = self.account.crypto.generate_csr(
+                self.next_alg_params, kp, self.next_domains)
+            order = self.account._do_signed_request(order['finalize'], {
+                'csr': b64_jose(csr),
+            }, ('Retry-After', ))
+
+        while order['status'] == 'processing':
+            sleep(_retry_delay(order))
+            order = self.account._do_signed_request(
+                order_url, '', ('Retry-After', ))
+
+        if order['status'] != 'valid':
+            self._ns.update(self._co_clear())
+            raise error.InvalidOrder(f'Bad order status: {order["status"]}')
+
+        pem_chain = self.account._download_certificate_request(
+            order['certificate'])
+
         """
         Linked list structure with invalid tail pointer
         Every certificate+keypair is a single binary
@@ -562,24 +762,25 @@ class CertUpdater:
         294: prev=255 alg=RS512 -----BEGIN CERTIFICATE...
         # 255 doesn't exist
         """
-        order = self.storage_ns.descend(self._CURRENT_ORDER_PREFIX)
-        latest = self.storage_ns.get(self._LATEST_KEY) or b'0'
-        bundle = pem.pack_bundle(
-            pem_chain=order.get(b'cert_chain'),
-            private_key=order.get(b'keypair'),
-            header=b'prev=' + latest + b' alg=' + order.get(b'alg'))
+
+        latest = self._ns.get(self._LATEST_KEY) or b'0'
+        bundle = pem.CertBundle(
+            prev=latest,
+            alg_params=BaseAlgParams.from_bytes(
+                self._ns.get(self._co_key(b'alg_params'))),
+            profile=bin_optstr_load(self._ns.get(self._co_key(b'profile'))),
+            private_key=self._ns.get(self._co_key(b'private_key')),
+            cert_chain=tuple(pem.split_pem_concat(pem_chain)),
+        )._pack()
         version = str(int(latest) + 1).encode('ascii')
-        self.storage_ns.update({
+        self._ns.update({
             version: bundle,
-            b'latest': version,
-            self._CURRENT_ORDER_PREFIX + b'url': b'',
-            self._CURRENT_ORDER_PREFIX + b'alg': b'',
-            self._CURRENT_ORDER_PREFIX + b'keypair': b'',
-            self._CURRENT_ORDER_PREFIX + b'cert_chain': b''})
+            self._LATEST_KEY: version,
+            **self._co_clear()})
 
     def cancel_current_order(self) -> None:
-        storage = self.storage_ns.descend(self._CURRENT_ORDER_PREFIX)
-        order_url = storage.get(b'url').decode('utf-8')
+        # TODO: test this
+        order_url = bin_str_load(self._ns.get(self._co_key(b'url')))
         if order_url:
             order = self.account._do_signed_request(
                 order_url, '', ('Retry-After', ))
@@ -587,123 +788,47 @@ class CertUpdater:
                 for url in order['authorizations']:
                     self.account._do_signed_request(url, {
                         'status': 'deactivated'})
-        storage.update({
-            b'url': b'',
-            b'alg': b'',
-            b'keypair': b'',
-            b'cert_chain': b''})
+        self._ns.update(self._co_clear())
 
-    def issue_new_certificate(self) -> None:
-        storage = self.storage_ns.descend(self._CURRENT_ORDER_PREFIX)
-
-        # TODO: automatically remove order on error
-        # TODO: automatically remove order on domain mismatch
-
-        order_url = storage.get(b'url').decode('utf-8')
-        if order_url:
-            # get existing order
-            # TODO: retry on not found
-            order = self.account._do_signed_request(
-                order_url, '', ('Retry-After', ))
-        else:
-            # create new order
-            order = self.account._do_signed_request(
-                self.account.directory['newOrder'], {
-                    'identifiers': [
-                        {'type': 'dns', 'value': d}
-                        for d in self.domains],
-                    'profile': self.profile,
-                }, ('Location', ))
-            order_url = order['__Location']
-            storage.update({b'url': order_url.encode('utf-8')})
-
-        if order['status'] == 'pending':
-            # all authorizations must complete
-            # they cover 1-by-1 each domain
-            try:
-                for a in order['authorizations']:
-                    self._perform_authorization(a)
-            except AcmeError as e:
-                storage.update({
-                    b'url': b'',
-                    b'alg': b'',
-                    b'keypair': b'',
-                    b'cert_chain': b''})
-                raise e
-            # all done, wait order status
-            while True:
-                order = self.account._do_signed_request(
-                    order_url, '', ('Retry-After', ))
-                if order['status'] != 'pending':
-                    break
-                sleep(_retry_delay(order))
-
-        if order['status'] == 'ready':
-            kp = self.account.crypto.generate_key_pair(self.key_params)
-            storage.update({
-                b'alg': self.alg.to_bytes(),
-                b'keypair': kp})
-            csr = self.account.crypto.generate_csr(self.alg, kp, self.domains)
-            order = self.account._do_signed_request(order['finalize'], {
-                'csr': b64_jose(csr),
-            }, ('Retry-After', ))
-
-        while order['status'] == 'processing':
-            sleep(_retry_delay(order))
-            order = self.account._do_signed_request(
-                order_url, '', ('Retry-After', ))
-
-        if order['status'] != 'valid':
-            storage.update({
-                b'url': b'',
-                b'alg': b'',
-                b'keypair': b'',
-                b'cert_chain': b''})
-            raise InvalidOrder(f'Bad order status: {order["status"]}')
-
-        pem_chain = self.account._download_certificate_request(
-            order['certificate'])
-        storage.update({b'cert_chain': pem_chain})
-        self._store_new_bundle()
-
-    def get_current_bundle(self) -> bytes:
-        latest = self.storage_ns.get(self._LATEST_KEY)
-        if not latest:
+    def get_bundle(self, version: bytes | None = None) -> pem.CertBundle:
+        if version is None:
+            version = self._ns.get(self._LATEST_KEY)
+        if not version or not (bundle := self._ns.get(version)):
             raise IndexError('No certificate bundle found')
-        bundle = self.storage_ns.get(latest)
-        return bundle[bundle.find(b'-----'):]
+        return pem.CertBundle._unpack(bundle)
+
+    def iter_bundles(self) -> Iterator[pem.CertBundle]:
+        version = self._ns.get(self._LATEST_KEY)
+        while (bundle := self._ns.get(version)):
+            cb = pem.CertBundle._unpack(bundle)
+            version = cb.prev
+            yield cb
+
+    def will_change_any(
+        self,
+        domains: bool = False,
+        alg_params: bool = False,
+        profile: bool = False,
+    ) -> bool:
+        try:
+            bundle = self.get_bundle()
+        except IndexError:
+            return True
+        if domains and (
+            set(self.next_domains)
+            != set(bundle.get_leaf_cert_info().domains)
+        ):
+            return True
+        if alg_params and (self.next_alg_params != bundle.alg_params):
+            return True
+        if profile and (self.next_profile != bundle.profile):
+            return True
+        return False
 
     def get_remaining_validity(self, now: datetime | None = None) -> timedelta:
         try:
-            bundle = self.get_current_bundle()
+            bundle = self.get_bundle()
         except IndexError:
             return timedelta(0)
-        cinfo = pem.parse_bundle_cert_info(bundle)
-        return cinfo.not_after - (
-            datetime.now(timezone.utc)
-            if now is None else now)
-
-    def write_nginx_files(
-        self, cert_chain: Path | str,
-        private_key: Path | str,
-    ) -> None:
-        if isinstance(cert_chain, str):
-            cert_chain = Path(cert_chain)
-        if isinstance(private_key, str):
-            private_key = Path(private_key)
-        cert = []
-        pk = b''
-        for part in pem.split_pem_bundle(self.get_current_bundle()):
-            ptype, _ = pem.pem_object_split(part)
-            match ptype:
-                case b'CERTIFICATE':
-                    cert.append(part)
-                case b'PRIVATE KEY':
-                    pk = part
-        cert_chain.write_bytes(b'\n\n'.join(cert))
-        private_key.write_bytes(pk)
-
-    def write_haproxy_file(self, path: Path | str) -> None:
-        if isinstance(path, str):
-            path = Path(path)
-        path.write_bytes(self.get_current_bundle())
+        return bundle.get_leaf_cert_info().not_after - (
+            utc_now() if now is None else now)

@@ -163,9 +163,17 @@ class UserActionRequired(AcmeError):
 # non-API errors
 
 
-class ChallengeTypeMismatch(AcmeError):
+class NoChallengeSolver(Exception):
     "Can't find supported challenge type"
 
 
-class InvalidOrder(AcmeError):
+class InvalidOrder(Exception):
     "Order has status `invalid`"
+
+
+class ValidAccountExists(Exception):
+    "Can't register on top of existing account"
+
+
+class NoAccountError(Exception):
+    "Account haven't been created yet"
