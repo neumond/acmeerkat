@@ -21,7 +21,12 @@ from .alg_params import (
 from .core import (
     Account,
     CertUpdater,
+    DirectoryUrl,
     KVNamespace,
+)
+from .debug import (
+    dump_account,
+    dump_cert_updater,
 )
 from .error import AcmeError
 from .jwk import (
@@ -70,7 +75,11 @@ __all__ = (
     # core
     'Account',
     'CertUpdater',
+    'DirectoryUrl',
     'KVNamespace',
+    # debug
+    'dump_account',
+    'dump_cert_updater',
     # error
     'AcmeError',
     # jwk

@@ -193,24 +193,31 @@ class OpenSslCrypto(BaseCrypto):
             check=True)
         return self._parse_pubkey(p.stdout.decode('ascii'))
 
+    def _sign_params(self, alg_params: ap.BaseAlgParams) -> list[str]:
+        r = []
+        jalg = alg_params.get_jws_alg()
+        apcls = type(alg_params)
+        if (h := HASH_BY_ALG.get(jalg, None)):
+            r.append(h)
+        if apcls in RSA_PSS_PARAMS:
+            h, salt = RSA_PSS_PARAMS[apcls]
+            r.extend(['-sigopt', 'rsa_padding_mode:pss'])
+            r.extend(['-sigopt', f'rsa_pss_saltlen:{salt}'])
+        return r
+
     def sign(
         self,
         alg_params: ap.BaseAlgParams,
         key_pair: PrivateKey,
         data: bytes,
     ) -> bytes:
-        cmd = []
-        if (h := HASH_BY_ALG.get(alg_params.get_jws_alg(), None)):
-            cmd.append(h)
-        if alg_params.get_jws_alg().startswith('PS'):
-            cmd.extend(['-sigopt', 'rsa_padding_mode:pss'])
-
         with tempfile.NamedTemporaryFile(mode='wb') as tfile:
             tfile.write(data)
             tfile.flush()
             p = subprocess.run(
                 [
-                    *self.openssl_cmd, 'dgst', *cmd,
+                    *self.openssl_cmd, 'dgst',
+                    *self._sign_params(alg_params),
                     # send sensitive data over anonymous pipe
                     '-sign', '/dev/stdin',
                     tfile.name,
@@ -261,13 +268,11 @@ class OpenSslCrypto(BaseCrypto):
         key_pair: PrivateKey,
         domains: tuple[str, ...],
     ) -> bytes:
-        cmd = []
-        if (h := HASH_BY_ALG.get(alg_params.get_jws_alg(), None)):
-            cmd.append(h)
         san = ', '.join(f'DNS:{d}' for d in domains)
         p = subprocess.run(
             [
-                *self.openssl_cmd, 'req', '-new', *cmd,
+                *self.openssl_cmd, 'req', '-new',
+                *self._sign_params(alg_params),
                 # send sensitive data over anonymous pipe
                 '-key', '/dev/stdin',
                 # recommended in LE docs

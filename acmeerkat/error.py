@@ -177,3 +177,7 @@ class ValidAccountExists(Exception):
 
 class NoAccountError(Exception):
     "Account haven't been created yet"
+
+
+class ChallengeError(Exception):
+    "Failed to fulfill the challenge"

@@ -28,6 +28,7 @@ from . import abc, error, pem, types as t
 __all__ = (
     'Account',
     'CertUpdater',
+    'DirectoryUrl',
     'KVNamespace',
 )
 
@@ -176,7 +177,7 @@ def _autofix_rollover_key(fn: Callable[..., Any]) -> Callable[..., Any]:
 @dataclass(frozen=True)
 class Account:
     "ACME account"
-    id: InitVar[str]
+    id: str
     storage: abc.BaseKVStorage
     https_client: InitVar[abc.BaseHttpsClient]
     crypto: abc.BaseCrypto
@@ -190,7 +191,6 @@ class Account:
 
     def __post_init__(
         self,
-        id: str,
         https_client: abc.BaseHttpsClient,
         accept_language: str,
         user_agent: str,
@@ -202,7 +202,7 @@ class Account:
             accept_language))
         object.__setattr__(self, '_ns', KVNamespace(
             self.storage,
-            ns_template.format(id=id).encode('utf-8')))
+            ns_template.format(id=self.id).encode('utf-8')))
 
     # public properties
 
@@ -410,7 +410,7 @@ class Account:
 
     def register(
         self,
-        directory_url: str = DirectoryUrl.letsencrypt_staging,
+        directory_url: DirectoryUrl | str,
         contacts: tuple[str, ...] = (),
         agree_to_tos: bool = True,
     ) -> None:
@@ -571,7 +571,17 @@ def _retry_delay(resp: dict[Any, Any]) -> float:
 # too many parameters to guarantee stable order, therefore kw_only
 @dataclass(frozen=True, kw_only=True)
 class CertUpdater:
-    id: InitVar[str]
+    """
+    `next_profile`: None if you don't care, otherwise choose
+    from account.directory['meta']['profiles']
+
+    `next_alg_params`: as of oct 2026, LE staging:
+    works: Ec256(), Ec384(), Rsa*()
+    doesn't work: Ec512(), Ed25519(), Ed448(), RsaPss*()
+    rsa key sizes: 2048, 3072, 4096
+    """
+
+    id: str
     account: Account
 
     # TODO: eventually support IPs
@@ -592,7 +602,6 @@ class CertUpdater:
 
     def __post_init__(
         self,
-        id: str,
         storage: abc.BaseKVStorage | None,
         ns_template: str,
     ) -> None:
@@ -604,7 +613,7 @@ class CertUpdater:
             storage = self.account.storage
         object.__setattr__(self, '_ns', KVNamespace(
             storage,
-            ns_template.format(id=id).encode('utf-8')))
+            ns_template.format(id=self.id).encode('utf-8')))
 
     def _find_chal_performer(
         self,
@@ -669,7 +678,7 @@ class CertUpdater:
                     case 'valid':
                         return
                     case _:
-                        raise Exception(f'Invalid authz state: {resp}')
+                        raise error.ChallengeError(f'Invalid state: {resp!r}')
 
     def _co_key(self, k: bytes) -> bytes:
         return self._CURRENT_ORDER_PREFIX + k
@@ -717,7 +726,7 @@ class CertUpdater:
                 for a in order['authorizations']:
                     self._perform_authorization(
                         challenges, a, account_thumbprint)
-            except error.AcmeError as e:
+            except (error.AcmeError, error.ChallengeError) as e:
                 self._ns.update(self._co_clear())
                 raise e
             # all done, wait order status
@@ -778,6 +787,9 @@ class CertUpdater:
             self._LATEST_KEY: version,
             **self._co_clear()})
 
+    def has_unfinished_order(self) -> bool:
+        return self._ns.get(self._co_key(b'url')) != b''
+
     def cancel_current_order(self) -> None:
         # TODO: test this
         order_url = bin_str_load(self._ns.get(self._co_key(b'url')))
@@ -821,7 +833,10 @@ class CertUpdater:
             return True
         if alg_params and (self.next_alg_params != bundle.alg_params):
             return True
-        if profile and (self.next_profile != bundle.profile):
+        if profile and (
+            self.next_profile is not None
+            and self.next_profile != bundle.profile
+        ):
             return True
         return False
 

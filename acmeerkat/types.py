@@ -63,8 +63,8 @@ def is_valid_directory_dict(d: Any) -> TypeGuard[DirectoryDict]:
 
 AccountStatus = Literal['valid', 'deactivated', 'revoked']
 AccountDict = TypedDict('AccountDict', {
-    '__Location': Required[str],
     'status': Required[AccountStatus],
+    '__Location': str,
     'contact': list[str],
     'termsOfServiceAgreed': bool,
     # NOTE: required by spec, but omitted on LE
@@ -78,17 +78,16 @@ AccountDict = TypedDict('AccountDict', {
 def is_valid_account_dict(d: Any) -> TypeGuard[AccountDict]:
     return (
         isinstance(d, dict)
-        and isinstance(d.get('__Location'), str)
         and d.get('status') in get_args(AccountStatus)
+        and ('__Location' not in d or (
+            isinstance(d.get('__Location'), str)))
         and ('contact' not in d or (
             isinstance(d['contact'], list)
             and all(isinstance(c, str) for c in d['contact'])))
-        and (
-            'termsOfServiceAgreed' not in d
-            or isinstance(d['termsOfServiceAgreed'], bool))
-        and (
-            'orders' not in d
-            or isinstance(d['orders'], str)))
+        and ('termsOfServiceAgreed' not in d or (
+            isinstance(d['termsOfServiceAgreed'], bool)))
+        and ('orders' not in d or (
+            isinstance(d['orders'], str))))
 
 
 # TODO: rename to Dict

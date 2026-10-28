@@ -56,7 +56,6 @@ account1 = Account(
     https_client=https_client,
     crypto=crypto,
     next_alg_params=Ec384())
-account1.refresh()
 
 if not account1.is_valid():
     account1.register(
@@ -80,14 +79,12 @@ if (
     cu.will_change_any(domains=True, alg_params=True)
     or cu.get_remaining_validity() <= timedelta(days=3)
 ):
-    if cu.issue_new_certificate(challenges=(DnsPersist01(), )):
-        print('✅ Issued new certificate')
-        cu.get_bundle().write_nginx_files(
-            cert_chain='/etc/nginx/certs/example.org.crt',
-            private_key='/etc/nginx/certs/example.org.key')
-        reload_nginx = True
-    else:
-        print('❌ Failed to issue a certificate')
+    cu.issue_new_certificate(challenges=(DnsPersist01(), ))
+    print('✅ Issued new certificate')
+    cu.get_bundle().write_nginx_files(
+        cert_chain='/etc/nginx/certs/example.org.crt',
+        private_key='/etc/nginx/certs/example.org.key')
+    reload_nginx = True
 else:
     print('Not yet to be updated')
 
