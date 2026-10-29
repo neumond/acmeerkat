@@ -7,7 +7,7 @@ from random import random
 from time import sleep
 from typing import Any, ClassVar
 
-from .alg_params import BaseAlgParams, Ec384
+from .alg_params import BaseAlgParams, Ec256, Ec384
 from .utils import (
     b64_jose,
     bin_fromisoformat,
@@ -181,7 +181,7 @@ class Account:
     storage: abc.BaseKVStorage
     https_client: InitVar[abc.BaseHttpsClient]
     crypto: abc.BaseCrypto
-    next_alg_params: BaseAlgParams = Ec384()
+    next_alg_params: BaseAlgParams = Ec256()
     accept_language: InitVar[str] = 'en, *;q=0.5'  # localized error messages
     user_agent: InitVar[str] = 'Acmeerkat/0.2'
     ns_template: InitVar[str] = 'account/{id}/'
