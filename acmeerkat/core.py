@@ -277,14 +277,21 @@ class Account:
     def _drop_rollover_key(self) -> dict[bytes, bytes]:
         return {
             b'rollover/alg_params': b'',
-            b'rollover/private_key': b''}
+            b'rollover/private_key': b'',
+            b'rollover/key_generated_at': b''}
 
     def _switch_to_rollover_key(self) -> dict[bytes, bytes]:
-        return {
+        r = {
             b'alg_params': self._ns.get(b'rollover/alg_params'),
             b'private_key': self._ns.get(b'rollover/private_key'),
-            b'rollover/alg_params': b'',
-            b'rollover/private_key': b''}
+            b'key_generated_at': self._ns.get(b'rollover/key_generated_at'),
+            **self._drop_rollover_key()}
+        if not (
+            r[b'alg_params'] and r[b'private_key'] and r[b'key_generated_at']
+        ):
+            raise Exception(
+                'Prevented unwanted key erasure; this is a bug in ACMEerkat')
+        return r
 
     def _sign_with_alg_key(
         self, protected: str, payload: str,
@@ -333,8 +340,7 @@ class Account:
 
     # half-protected methods, used by CertUpdater
 
-    @_autofix_rollover_key
-    def _do_signed_request(
+    def _do_signed_request_no_fix(
         self, url: str,
         payload: dict[Any, Any] | str,
         capture_headers: Iterable[str] = (),
@@ -350,6 +356,14 @@ class Account:
         if not isinstance(r, dict):
             raise Exception('Expected json response')
         return r
+
+    @_autofix_rollover_key
+    def _do_signed_request(
+        self, url: str,
+        payload: dict[Any, Any] | str,
+        capture_headers: Iterable[str] = (),
+    ) -> dict[Any, Any]:
+        return self._do_signed_request_no_fix(url, payload, capture_headers)
 
     @_autofix_rollover_key
     def _download_certificate_request(self, url: str) -> bytes:
@@ -432,8 +446,7 @@ class Account:
             b'directory_url': bin_str_dump(directory_url),
             b'alg_params': self.next_alg_params.to_bytes(),
             b'contacts': bin_json_dumps(contacts),
-            b'rollover/alg_params': b'',
-            b'rollover/private_key': b''}
+            **self._drop_rollover_key()}
 
         directory = self._hwrap.get_directory(directory_url)
         upd[b'directory'] = bin_json_dumps(directory)
@@ -464,7 +477,8 @@ class Account:
         # store new key nearby, do not rewrite existing key just yet
         self._ns.update({
             b'rollover/alg_params': self.next_alg_params.to_bytes(),
-            b'rollover/private_key': new_kp})
+            b'rollover/private_key': new_kp,
+            b'rollover/key_generated_at': bin_isoformat(utc_now())})
 
         inner = {
             'protected': jws_serialize({
@@ -481,7 +495,7 @@ class Account:
             self.next_alg_params, new_kp)
 
         try:
-            acc = self._do_signed_request(
+            acc = self._do_signed_request_no_fix(
                 directory['keyChange'], inner)
         except (
             error.BadSignatureAlgorithm,  # algorithm not supported
@@ -524,8 +538,7 @@ class Account:
                 b'agreed_to_tos': b'',
                 b'account_url': b'',
                 b'account': b'',
-                b'rollover/alg_params': b'',
-                b'rollover/private_key': b''})
+                **self._drop_rollover_key()})
         else:
             self._ns.update(self._acc_update(acc))
 

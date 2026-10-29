@@ -1,4 +1,4 @@
-from typing import Any, Callable
+from typing import Any, Protocol
 
 from .core import Account, CertUpdater
 
@@ -9,7 +9,12 @@ __all__ = (
 )
 
 
-def make_table_print(ksize: int) -> Callable[[str, Any, bool], None]:
+class TablePrintFn(Protocol):
+    def __call__(self, key: str, value: Any, raw: bool = False) -> None:
+        ...
+
+
+def make_table_print(ksize: int) -> TablePrintFn:
     fmt = f'{{key:>{ksize}}}: {{value}}'
 
     def tprint(key: str, value: Any, raw: bool = False) -> None:

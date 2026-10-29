@@ -4,6 +4,10 @@ function cmd__mypy
     mypy --strict acmeerkat/
 end
 
+function cmd__flake8
+    flake8 $argv acmeerkat/
+end
+
 function cmd__pytest
     PYTHONPATH=. pytest $argv
 end

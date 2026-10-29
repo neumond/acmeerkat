@@ -199,7 +199,11 @@ class OpenSslCrypto(BaseCrypto):
         apcls = type(alg_params)
         if (h := HASH_BY_ALG.get(jalg, None)):
             r.append(h)
-        if apcls in RSA_PSS_PARAMS:
+        if (
+            apcls in RSA_PSS_PARAMS
+            # second check isn't really necessary, fooling mypy
+            and issubclass(apcls, ap.BaseRsaParams)
+        ):
             h, salt = RSA_PSS_PARAMS[apcls]
             r.extend(['-sigopt', 'rsa_padding_mode:pss'])
             r.extend(['-sigopt', f'rsa_pss_saltlen:{salt}'])

@@ -34,8 +34,13 @@ def b64_jose(b: bytes) -> str:
 def bin_json_dumps(
     d: Any,
     separators: tuple[str, str] = COMPACT_JSON_SEP,
+    sort_keys: bool = False,
 ) -> bytes:
-    return json.dumps(d, separators=separators).encode('utf-8')
+    return json.dumps(
+        d,
+        separators=separators,
+        sort_keys=sort_keys,
+    ).encode('utf-8')
 
 
 def bin_json_loads(j: bytes) -> Any:
@@ -45,8 +50,12 @@ def bin_json_loads(j: bytes) -> Any:
 def jws_serialize(
     d: dict[Any, Any],
     separators: tuple[str, str] = COMPACT_JSON_SEP,
+    sort_keys: bool = False,
 ) -> str:
-    return b64_jose(bin_json_dumps(d, separators=separators))
+    return b64_jose(bin_json_dumps(
+        d,
+        separators=separators,
+        sort_keys=sort_keys))
 
 
 def uint_to_bytes(n: int) -> bytes:
